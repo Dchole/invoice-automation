@@ -10,6 +10,8 @@ COPY . .
 # Create data directory for SQLite
 RUN mkdir -p /app/data
 
+ENV INV_DATABASE_URL=sqlite:////app/data/invoices.db
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

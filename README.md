@@ -21,20 +21,10 @@ source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Create a `backend/.env` file to override defaults (all fields optional):
+Copy the example env file (Ethereal SMTP is pre-configured for local email testing):
 
-```env
-INV_DATABASE_URL=sqlite:///./data/invoices.db
-INV_DEFAULT_CURRENCY=CAD
-INV_DEFAULT_PAYMENT_TERMS=30
-INV_MOCK_EMAIL=true
-
-# SMTP (only needed if INV_MOCK_EMAIL=false)
-INV_SMTP_HOST=
-INV_SMTP_PORT=587
-INV_SMTP_USER=
-INV_SMTP_PASSWORD=
-INV_SMTP_FROM=invoices@example.com
+```bash
+cp backend/.env.example backend/.env
 ```
 
 ### Frontend
@@ -93,6 +83,18 @@ Run with a UI:
 ```bash
 npm run test:e2e:ui
 ```
+
+---
+
+## Email (Ethereal)
+
+The app is pre-configured to send emails via [Ethereal](https://ethereal.email) — a fake SMTP service for development. Emails are never actually delivered; you read them in the Ethereal web inbox instead.
+
+1. Go to **https://ethereal.email/login**
+2. Log in with the credentials from `backend/.env`:
+   - **Email:** `adan.block36@ethereal.email`
+   - **Password:** `VfjFUWShGJu1TxFF8n`
+3. Click **Messages** to see all captured emails (invoice reminders, etc.)
 
 ---
 

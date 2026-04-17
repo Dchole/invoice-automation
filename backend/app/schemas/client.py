@@ -3,15 +3,17 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, EmailStr
 
+from app.config import settings
+
 
 class ClientBase(BaseModel):
     name: str
     email: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
-    currency: str = "CAD"
+    currency: str = settings.default_currency
     default_rate: Optional[float] = None
-    payment_terms: int = 30
+    payment_terms: int = settings.default_payment_terms
     notes: Optional[str] = None
 
 

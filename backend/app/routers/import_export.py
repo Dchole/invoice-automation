@@ -2,9 +2,11 @@ from __future__ import annotations
 import csv
 import io
 import shutil
+from datetime import date
 from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from openpyxl import Workbook
 from sqlalchemy.orm import Session as DbSession
 
 from app.database import get_db
@@ -37,6 +39,7 @@ def upload_excel(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
     return {
         "clients_created": result.clients_created,
         "sessions_created": result.sessions_created,
+        "invoices_created": result.invoices_created,
         "payments_created": result.payments_created,
         "errors": result.errors,
         "warnings": result.warnings,
@@ -144,4 +147,103 @@ def export_payments_csv(db: DbSession = Depends(get_db)):
         output,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=payments_export.csv"},
+    )
+
+
+@router.get("/export/excel")
+def export_excel(db: DbSession = Depends(get_db)):
+    """Export all data as a single .xlsx workbook that can be re-imported."""
+    wb = Workbook()
+
+    # --- Client Summary sheet ---
+    ws_clients = wb.active
+    ws_clients.title = "Client Summary"
+    ws_clients.append(["Client Name", "Email", "Currency", "Rate", "Payment Terms"])
+    clients = db.query(Client).order_by(Client.name).all()
+    client_map: dict[int, Client] = {}
+    for c in clients:
+        client_map[c.id] = c
+        ws_clients.append([
+            c.name,
+            c.email or "",
+            c.currency,
+            float(c.default_rate) if c.default_rate else "",
+            c.payment_terms,
+        ])
+
+    # --- Invoices sheet ---
+    ws_inv = wb.create_sheet("Invoices")
+    ws_inv.append([
+        "Invoice Number", "Client", "Issue Date", "Due Date",
+        "Subtotal", "Tax Rate %", "Tax Amount", "Total",
+        "Amount Paid", "Balance", "Currency", "Status",
+        "Sent Date", "Paid Date",
+    ])
+    invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).all()
+    for inv in invoices:
+        client = client_map.get(inv.client_id)
+        balance = float(inv.total) - float(inv.amount_paid)
+        ws_inv.append([
+            inv.invoice_number,
+            client.name if client else "",
+            inv.issue_date,
+            inv.due_date,
+            float(inv.subtotal),
+            float(inv.tax_rate),
+            float(inv.tax_amount),
+            float(inv.total),
+            float(inv.amount_paid),
+            round(balance, 2),
+            inv.currency,
+            inv.status,
+            str(inv.sent_at.date()) if inv.sent_at else "",
+            str(inv.paid_at.date()) if inv.paid_at else "",
+        ])
+
+    # --- Payments sheet ---
+    ws_pay = wb.create_sheet("Payments")
+    ws_pay.append(["Date", "Invoice Number", "Client", "Amount", "Payment Method", "Reference", "Notes"])
+    payments = db.query(Payment).order_by(Payment.payment_date.desc()).all()
+    for p in payments:
+        inv = db.get(Invoice, p.invoice_id)
+        client = client_map.get(inv.client_id) if inv else None
+        ws_pay.append([
+            p.payment_date,
+            inv.invoice_number if inv else "",
+            client.name if client else "",
+            float(p.amount),
+            p.payment_method or "",
+            p.reference or "",
+            p.notes or "",
+        ])
+
+    # --- Sessions sheet ---
+    ws_sess = wb.create_sheet("Sessions")
+    ws_sess.append([
+        "Client", "Date", "Duration", "Rate", "Amount",
+        "Description", "Status",
+    ])
+    from app.models.session import Session as SessionModel  # noqa: already imported at top but alias differs
+    sessions = db.query(SessionModel).order_by(SessionModel.date.desc()).all()
+    for s in sessions:
+        client = client_map.get(s.client_id)
+        ws_sess.append([
+            client.name if client else "",
+            s.date,
+            s.duration_minutes,
+            float(s.hourly_rate) if s.hourly_rate else "",
+            float(s.amount) if s.amount else "",
+            s.description or "",
+            s.status,
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    today = date.today().isoformat()
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=invoice_automation_export_{today}.xlsx"},
     )

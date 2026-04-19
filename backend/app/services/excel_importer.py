@@ -95,6 +95,7 @@ class ImportResult:
     def __init__(self):
         self.clients_created: int = 0
         self.sessions_created: int = 0
+        self.invoices_created: int = 0
         self.payments_created: int = 0
         self.errors: list[str] = []
         self.warnings: list[str] = []
@@ -163,6 +164,122 @@ def _import_client_summary(db: DbSession, wb, client_cache: dict, result: Import
 
             db.flush()
             break  # Only process first matching summary sheet
+
+
+def _import_invoices(db: DbSession, sheet_name: str, rows: list, headers: list[str],
+                     client_cache: dict, result: ImportResult):
+    """Import invoice rows, creating Invoice records matched to clients by name."""
+    col = {}
+    for i, h in enumerate(headers):
+        if "invoice" in h and "number" in h:
+            col.setdefault("invoice_number", i)
+        elif "client" in h or h == "name":
+            col.setdefault("client", i)
+        elif "issue" in h and "date" in h:
+            col.setdefault("issue_date", i)
+        elif "due" in h and "date" in h:
+            col.setdefault("due_date", i)
+        elif "subtotal" in h:
+            col.setdefault("subtotal", i)
+        elif "tax" in h and ("%" in h or "rate" in h):
+            col.setdefault("tax_rate", i)
+        elif "tax" in h and "amount" in h:
+            col.setdefault("tax_amount", i)
+        elif h in ("total",):
+            col.setdefault("total", i)
+        elif "amount paid" in h or "paid" in h and "date" not in h:
+            col.setdefault("amount_paid", i)
+        elif "balance" in h:
+            col.setdefault("balance", i)
+        elif "currency" in h:
+            col.setdefault("currency", i)
+        elif "status" in h:
+            col.setdefault("status", i)
+        elif "sent" in h:
+            col.setdefault("sent_at", i)
+        elif h == "paid date":
+            col.setdefault("paid_at", i)
+
+    if "invoice_number" not in col:
+        result.warnings.append(f"Sheet '{sheet_name}': no invoice number column, skipping")
+        return
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        vals = [c.value for c in row]
+        inv_num = str(vals[col["invoice_number"]] or "").strip()
+        if not inv_num:
+            continue
+
+        # Skip if invoice already exists
+        existing = db.query(Invoice).filter(Invoice.invoice_number == inv_num).first()
+        if existing:
+            result.warnings.append(f"Sheet '{sheet_name}' row {row_idx}: invoice '{inv_num}' already exists, skipping")
+            continue
+
+        # Resolve client
+        client = None
+        if "client" in col:
+            client_name = str(vals[col["client"]] or "").strip()
+            if client_name:
+                key = client_name.lower()
+                if key not in client_cache:
+                    c = Client(name=client_name)
+                    db.add(c)
+                    db.flush()
+                    client_cache[key] = c
+                    result.clients_created += 1
+                client = client_cache[key]
+
+        if not client:
+            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: no client for invoice '{inv_num}'")
+            continue
+
+        issue_date = _parse_date(vals[col["issue_date"]]) if "issue_date" in col else None
+        due_date = _parse_date(vals[col["due_date"]]) if "due_date" in col else None
+        if not issue_date or not due_date:
+            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: missing issue/due date")
+            continue
+
+        subtotal = _clean_rate(vals[col["subtotal"]]) if "subtotal" in col else 0
+        tax_rate = _clean_rate(vals[col["tax_rate"]]) if "tax_rate" in col else 0
+        tax_amount = _clean_rate(vals[col["tax_amount"]]) if "tax_amount" in col else 0
+        total = _clean_rate(vals[col["total"]]) if "total" in col else (subtotal or 0) + (tax_amount or 0)
+        amount_paid = _clean_rate(vals[col["amount_paid"]]) if "amount_paid" in col else 0
+        currency_val = str(vals[col["currency"]]).strip().upper() if "currency" in col and vals[col["currency"]] else client.currency
+        status_val = str(vals[col["status"]]).strip().lower() if "status" in col and vals[col["status"]] else "draft"
+
+        sent_at = None
+        if "sent_at" in col and vals[col["sent_at"]]:
+            d = _parse_date(vals[col["sent_at"]])
+            if d:
+                from datetime import datetime as dt
+                sent_at = dt.combine(d, dt.min.time())
+
+        paid_at = None
+        if "paid_at" in col and vals[col["paid_at"]]:
+            d = _parse_date(vals[col["paid_at"]])
+            if d:
+                from datetime import datetime as dt
+                paid_at = dt.combine(d, dt.min.time())
+
+        invoice = Invoice(
+            invoice_number=inv_num,
+            client_id=client.id,
+            issue_date=issue_date,
+            due_date=due_date,
+            subtotal=subtotal or 0,
+            tax_rate=tax_rate or 0,
+            tax_amount=tax_amount or 0,
+            total=total or 0,
+            amount_paid=amount_paid or 0,
+            currency=currency_val,
+            status=status_val,
+            sent_at=sent_at,
+            paid_at=paid_at,
+        )
+        db.add(invoice)
+        db.flush()
+        result.invoices_created += 1
 
 
 def _import_payments(db: DbSession, sheet_name: str, rows: list, headers: list[str], result: ImportResult):
@@ -244,36 +361,52 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
     # Pre-pass: read client summary sheet for emails, currency, rates
     _import_client_summary(db, wb, client_cache, result)
 
+    # Categorise sheets
+    invoice_sheets = []
+    payment_sheets = []
+    session_sheets = []
+    client_summary_names = {"client summary", "clients", "client list", "summary"}
+
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        status = _guess_status(sheet_name)
         rows = list(ws.iter_rows(min_row=1, values_only=False))
         if not rows:
             continue
 
         headers = [str(c.value or "").strip().lower() for c in rows[0]]
         header_set = set(headers)
-
-        # Detect sheet type by headers
         header_joined = " ".join(headers)
+
+        if sheet_name.lower().strip() in client_summary_names:
+            continue  # Already processed in pre-pass
+
         payment_markers = {"payment method", "reference", "invoice number"}
         invoice_markers = {"invoice number", "due date", "tax rate", "tax rate %", "tax amount", "subtotal"}
         is_payment_sheet = len(payment_markers & header_set) >= 2 and "duration" not in header_joined
         is_invoice_sheet = len(invoice_markers & header_set) >= 3 and "duration" not in header_joined
 
-        if sheet_name.lower().strip() in ("client summary", "clients", "client list", "summary"):
-            continue  # Already processed in pre-pass
-
         if is_invoice_sheet and not is_payment_sheet:
-            result.warnings.append(f"Sheet '{sheet_name}': contains invoice data, skipping (re-importing invoices is not supported)")
-            continue
+            invoice_sheets.append((sheet_name, rows, headers))
+        elif is_payment_sheet:
+            payment_sheets.append((sheet_name, rows, headers))
+        else:
+            session_sheets.append((sheet_name, rows, headers))
 
-        if is_payment_sheet:
-            _import_payments(db, sheet_name, rows, headers, result)
-            continue
+    # Pass 1: invoices (so payment references resolve)
+    for sheet_name, rows, headers in invoice_sheets:
+        _import_invoices(db, sheet_name, rows, headers, client_cache, result)
+    db.flush()
+
+    # Pass 2: payments
+    for sheet_name, rows, headers in payment_sheets:
+        _import_payments(db, sheet_name, rows, headers, result)
+
+    # Pass 3: sessions
+    for sheet_name, rows, headers in session_sheets:
+        status = _guess_status(sheet_name)
 
         col_map = {}
-        for i, h in enumerate(headers):
+        for i, h in enumerate(headers):  # noqa: E501
             if "client" in h or "name" in h:
                 col_map.setdefault("client", i)
             elif "date" in h and "pay" not in h:

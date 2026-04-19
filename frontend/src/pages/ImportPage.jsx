@@ -91,7 +91,7 @@ export default function ImportPage() {
               Import Complete
             </h2>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-5">
             <div
               className="rounded-lg p-4 text-center"
               style={{ backgroundColor: 'var(--color-status-green-bg)', border: '1px solid var(--color-status-green-border)' }}
@@ -112,9 +112,33 @@ export default function ImportPage() {
                 className="text-2xl font-bold"
                 style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-status-blue)' }}
               >
+                {result.invoices_created}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-status-blue)' }}>Invoices Created</p>
+            </div>
+            <div
+              className="rounded-lg p-4 text-center"
+              style={{ backgroundColor: 'var(--color-status-blue-bg)', border: '1px solid var(--color-status-blue-border)' }}
+            >
+              <p
+                className="text-2xl font-bold"
+                style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-status-blue)' }}
+              >
                 {result.sessions_created}
               </p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--color-status-blue)' }}>Sessions Imported</p>
+            </div>
+            <div
+              className="rounded-lg p-4 text-center"
+              style={{ backgroundColor: 'var(--color-status-purple-bg, var(--color-status-blue-bg))', border: '1px solid var(--color-status-purple-border, var(--color-status-blue-border))' }}
+            >
+              <p
+                className="text-2xl font-bold"
+                style={{ fontFamily: 'var(--font-heading)', color: 'var(--color-status-purple, var(--color-status-blue))' }}
+              >
+                {result.payments_created}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-status-purple, var(--color-status-blue))' }}>Payments Created</p>
             </div>
           </div>
           {result.warnings?.length > 0 && (
@@ -162,6 +186,18 @@ export default function ImportPage() {
           Download your data as CSV files for accounting software or as a database backup.
         </p>
         <div className="flex flex-wrap gap-3">
+          <a
+            href={api.exportExcel()}
+            download
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: 'white',
+            }}
+          >
+            <Download size={15} />
+            Full Export (.xlsx)
+          </a>
           <a
             href={api.exportInvoicesCsv()}
             download

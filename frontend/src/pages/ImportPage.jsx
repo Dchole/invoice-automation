@@ -399,18 +399,11 @@ export default function ImportPage() {
           as a database backup.
         </p>
         <div className="flex flex-wrap gap-3">
-          <a
-            href={api.exportExcel()}
-            download
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
-            style={{
-              backgroundColor: "var(--color-accent)",
-              color: "white"
-            }}
-          >
-            <Download size={15} />
-            Full Export (.xlsx)
-          </a>
+          <ExportPopover
+            label="Full Export"
+            csvHref={api.exportCsv()}
+            excelHref={api.exportExcel()}
+          />
           <ExportPopover
             label="Invoices"
             csvHref={api.exportInvoicesCsv()}

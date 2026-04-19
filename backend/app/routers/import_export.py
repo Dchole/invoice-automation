@@ -418,3 +418,108 @@ def export_excel(db: DbSession = Depends(get_db)):
             "Content-Disposition": f"attachment; filename=invoice_automation_export_{today}.xlsx"
         },
     )
+
+
+@router.get("/export/csv")
+def export_csv(db: DbSession = Depends(get_db)):
+    """Export all data as a single CSV (multiple sections separated by headers)."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # --- Clients ---
+    clients = db.query(Client).order_by(Client.name).all()
+    client_map: dict[int, Client] = {}
+    writer.writerow(["## Clients"])
+    writer.writerow(["Client Name", "Email", "Currency", "Rate", "Payment Terms"])
+    for c in clients:
+        client_map[c.id] = c
+        writer.writerow([
+            c.name,
+            c.email or "",
+            c.currency,
+            f"{float(c.default_rate):.2f}" if c.default_rate else "",
+            c.payment_terms,
+        ])
+
+    # --- Invoices ---
+    writer.writerow([])
+    writer.writerow(["## Invoices"])
+    writer.writerow([
+        "Invoice Number", "Client", "Client Email", "Issue Date", "Due Date",
+        "Subtotal", "Tax Rate %", "Tax Amount", "Total", "Amount Paid",
+        "Balance", "Currency", "Status", "Sent Date", "Paid Date",
+    ])
+    invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).all()
+    for inv in invoices:
+        client = client_map.get(inv.client_id)
+        balance = float(inv.total) - float(inv.amount_paid)
+        writer.writerow([
+            inv.invoice_number,
+            client.name if client else "",
+            client.email if client and client.email else "",
+            str(inv.issue_date),
+            str(inv.due_date),
+            f"{float(inv.subtotal):.2f}",
+            f"{float(inv.tax_rate):.2f}",
+            f"{float(inv.tax_amount):.2f}",
+            f"{float(inv.total):.2f}",
+            f"{float(inv.amount_paid):.2f}",
+            f"{balance:.2f}",
+            inv.currency,
+            inv.status,
+            str(inv.sent_at or ""),
+            str(inv.paid_at or ""),
+        ])
+
+    # --- Payments ---
+    writer.writerow([])
+    writer.writerow(["## Payments"])
+    writer.writerow([
+        "Date", "Invoice Number", "Client", "Client Email",
+        "Amount", "Payment Method", "Reference", "Notes",
+    ])
+    payments = db.query(Payment).order_by(Payment.payment_date.desc()).all()
+    for p in payments:
+        inv = db.get(Invoice, p.invoice_id)
+        client = client_map.get(inv.client_id) if inv else None
+        writer.writerow([
+            str(p.payment_date),
+            inv.invoice_number if inv else "",
+            client.name if client else "",
+            client.email if client and client.email else "",
+            f"{float(p.amount):.2f}",
+            p.payment_method or "",
+            p.reference or "",
+            p.notes or "",
+        ])
+
+    # --- Sessions ---
+    writer.writerow([])
+    writer.writerow(["## Sessions"])
+    writer.writerow([
+        "Client", "Client Email", "Date", "Duration",
+        "Rate", "Amount", "Description", "Status",
+    ])
+    sessions = db.query(SessionModel).order_by(SessionModel.date.desc()).all()
+    for s in sessions:
+        client = client_map.get(s.client_id)
+        writer.writerow([
+            client.name if client else "",
+            client.email if client and client.email else "",
+            str(s.date),
+            s.duration_minutes,
+            f"{float(s.hourly_rate):.2f}" if s.hourly_rate else "",
+            f"{float(s.amount):.2f}" if s.amount else "",
+            s.description or "",
+            s.status,
+        ])
+
+    output.seek(0)
+    today = date.today().isoformat()
+    return StreamingResponse(
+        output,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=invoice_automation_export_{today}.csv"
+        },
+    )

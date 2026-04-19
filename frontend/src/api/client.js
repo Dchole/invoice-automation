@@ -88,6 +88,7 @@ export const api = {
   exportPaymentsCsv: () => `${BASE}/import/export/payments-csv`,
   exportInvoicesExcel: () => `${BASE}/import/export/invoices-excel`,
   exportPaymentsExcel: () => `${BASE}/import/export/payments-excel`,
+  exportCsv: () => `${BASE}/import/export/csv`,
   exportExcel: () => `${BASE}/import/export/excel`,
   exportBackup: () => `${BASE}/import/export/backup`,
 

@@ -50,10 +50,14 @@ def upload_excel(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
 
 @router.post("/csv")
 def upload_csv(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
-    if not file.filename.endswith(".csv"):
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv"):
         raise HTTPException(400, "Only .csv files are supported")
 
-    content = file.file.read().decode("utf-8-sig")
+    try:
+        content = file.file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(400, "CSV file must be UTF-8 encoded")
     result = import_csv(db, content)
     return {
         "clients_created": result.clients_created,

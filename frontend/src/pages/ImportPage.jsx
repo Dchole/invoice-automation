@@ -21,10 +21,21 @@ function ExportPopover({ label, csvHref, excelHref }) {
     return () => document.removeEventListener("pointerdown", handler);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKey = e => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
   return (
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(o => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
         className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
         style={{
           backgroundColor: "var(--color-canvas-raised)",
@@ -38,6 +49,7 @@ function ExportPopover({ label, csvHref, excelHref }) {
       </button>
       {open && (
         <div
+          role="menu"
           className="absolute top-full left-0 mt-1 rounded-lg py-1 z-10 min-w-[140px] animate-fade-in"
           style={{
             backgroundColor: "var(--color-canvas-raised)",
@@ -94,11 +106,14 @@ export default function ImportPage() {
     setUploading(true);
     setResult(null);
     try {
+      const ext = file.name.toLowerCase();
       let res;
-      if (file.name.endsWith(".csv")) {
+      if (ext.endsWith(".csv")) {
         res = await api.uploadCsv(file);
-      } else {
+      } else if (ext.endsWith(".xlsx")) {
         res = await api.uploadExcel(file);
+      } else {
+        throw new Error("Unsupported file type. Please upload a .csv or .xlsx file.");
       }
       setResult(res);
     } catch (e) {
@@ -177,12 +192,12 @@ export default function ImportPage() {
             : "Drag & drop your .xlsx or .csv file here, or click to browse"}
         </p>
         <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-          Supports .xlsx, .xls, and .csv files
+          Supports .xlsx and .csv files
         </p>
         <input
           ref={fileRef}
           type="file"
-          accept=".xlsx,.xls,.csv"
+          accept=".xlsx,.csv"
           className="hidden"
           onChange={e => handleFile(e.target.files[0])}
         />

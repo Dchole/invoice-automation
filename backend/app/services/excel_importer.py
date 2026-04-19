@@ -181,6 +181,21 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
             continue
 
         headers = [str(c.value or "").strip().lower() for c in rows[0]]
+        header_set = set(headers)
+
+        # Skip sheets that are clearly not session data (payments, invoices, summaries)
+        payment_markers = {"payment method", "reference", "invoice number"}
+        invoice_markers = {"invoice number", "due date", "tax rate", "tax rate %", "tax amount", "subtotal"}
+        summary_markers = {"currency", "payment terms", "email"}
+        if payment_markers & header_set and "duration" not in " ".join(headers):
+            result.warnings.append(f"Sheet '{sheet_name}': looks like payment data, skipping (import only supports sessions)")
+            continue
+        if invoice_markers & header_set and "duration" not in " ".join(headers):
+            result.warnings.append(f"Sheet '{sheet_name}': looks like invoice data, skipping (import only supports sessions)")
+            continue
+        if sheet_name.lower().strip() in ("client summary", "clients", "client list", "summary"):
+            continue  # Already processed in pre-pass
+
         col_map = {}
         for i, h in enumerate(headers):
             if "client" in h or "name" in h:

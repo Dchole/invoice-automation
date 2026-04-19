@@ -1,8 +1,6 @@
 from __future__ import annotations
 import logging
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import resend
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session as DbSession
 
@@ -124,7 +122,7 @@ def process_due_reminders(db: DbSession) -> list[dict]:
 
 
 def _send_email(invoice: Invoice, reminder: Reminder, db: DbSession):
-    """Send a reminder email via SMTP."""
+    """Send a reminder email via Resend."""
     client = db.get(Client, invoice.client_id)
     if not client or not client.email:
         logger.warning(f"No email for client_id={invoice.client_id}, skipping send")
@@ -146,21 +144,19 @@ def _send_email(invoice: Invoice, reminder: Reminder, db: DbSession):
         **template_vars
     )
 
-    msg = MIMEMultipart()
-    msg["From"] = settings.smtp_from
-    msg["To"] = client.email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-            server.starttls()
-            server.login(settings.smtp_user, settings.smtp_password)
-            server.send_message(msg)
+        resend.api_key = settings.resend_api_key
+        resend.Emails.send(
+            {
+                "from": settings.email_from,
+                "to": [client.email],
+                "subject": subject,
+                "text": body,
+            }
+        )
         logger.info(f"Email sent to {client.email}: {subject}")
     except Exception as e:
         logger.error(f"Failed to send email to {client.email}: {e}")
-        raise
 
 
 def check_overdue_invoices(db: DbSession) -> int:

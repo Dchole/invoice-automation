@@ -1,8 +1,6 @@
 from __future__ import annotations
 import logging
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import resend
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -231,25 +229,26 @@ def send_invoice(invoice_id: int, db: DbSession = Depends(get_db)):
         notes=inv.notes,
     )
 
+    email_error = None
     if client.email:
         if settings.mock_email:
             logger.info(f"[MOCK EMAIL] Invoice {inv.invoice_number} to {client.email}")
         else:
-            msg = MIMEMultipart("alternative")
-            msg["From"] = settings.smtp_from
-            msg["To"] = client.email
-            msg["Subject"] = subject
-            msg.attach(MIMEText(plain, "plain"))
-            msg.attach(MIMEText(html, "html"))
             try:
-                with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-                    server.starttls()
-                    server.login(settings.smtp_user, settings.smtp_password)
-                    server.send_message(msg)
+                resend.api_key = settings.resend_api_key
+                resend.Emails.send(
+                    {
+                        "from": settings.email_from,
+                        "to": [client.email],
+                        "subject": subject,
+                        "html": html,
+                        "text": plain,
+                    }
+                )
                 logger.info(f"Invoice {inv.invoice_number} emailed to {client.email}")
             except Exception as e:
                 logger.error(f"Failed to email invoice to {client.email}: {e}")
-                raise HTTPException(500, f"Failed to send email: {e}")
+                email_error = str(e)
     else:
         logger.warning(
             f"Client {client.name} has no email — invoice marked sent but not emailed"
@@ -259,4 +258,15 @@ def send_invoice(invoice_id: int, db: DbSession = Depends(get_db)):
     inv.sent_at = datetime.utcnow()
     db.commit()
     db.refresh(inv)
+
+    result = {
+        "id": inv.id,
+        "invoice_number": inv.invoice_number,
+        "status": inv.status,
+        "sent_at": str(inv.sent_at),
+    }
+    if email_error:
+        result["email_warning"] = (
+            f"Invoice marked as sent but email delivery failed: {email_error}"
+        )
     return inv

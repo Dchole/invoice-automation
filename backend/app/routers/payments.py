@@ -1,8 +1,6 @@
 from __future__ import annotations
 import logging
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import resend
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -91,21 +89,21 @@ def _send_payment_confirmation(db: DbSession, invoice: Invoice, payment: Payment
         )
         return
 
-    msg = MIMEMultipart()
-    msg["From"] = settings.smtp_from
-    msg["To"] = client.email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-            server.starttls()
-            server.login(settings.smtp_user, settings.smtp_password)
-            server.send_message(msg)
+        resend.api_key = settings.resend_api_key
+        resend.Emails.send(
+            {
+                "from": settings.email_from,
+                "to": [client.email],
+                "subject": subject,
+                "text": body,
+            }
+        )
         logger.info(
             f"Payment confirmation sent to {client.email} for {invoice.invoice_number}"
         )
     except Exception as e:
-        logger.error(f"Failed to send payment confirmation: {e}")
+        logger.error(f"Failed to send payment confirmation to {client.email}: {e}")
 
 
 @router.post("/bulk", response_model=List[PaymentRead], status_code=201)

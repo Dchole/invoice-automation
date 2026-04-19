@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.models.client import Client
 from app.models.session import Session
+from app.models.invoice import Invoice
+from app.models.payment import Payment
 
 
 def _clean_rate(val) -> Optional[float]:
@@ -93,6 +95,7 @@ class ImportResult:
     def __init__(self):
         self.clients_created: int = 0
         self.sessions_created: int = 0
+        self.payments_created: int = 0
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
@@ -162,6 +165,74 @@ def _import_client_summary(db: DbSession, wb, client_cache: dict, result: Import
             break  # Only process first matching summary sheet
 
 
+def _import_payments(db: DbSession, sheet_name: str, rows: list, headers: list[str], result: ImportResult):
+    """Import payment rows by matching invoice numbers to existing invoices."""
+    col = {}
+    for i, h in enumerate(headers):
+        if "invoice" in h and "number" in h:
+            col.setdefault("invoice_number", i)
+        elif "date" in h:
+            col.setdefault("date", i)
+        elif "amount" in h:
+            col.setdefault("amount", i)
+        elif "method" in h:
+            col.setdefault("method", i)
+        elif "reference" in h:
+            col.setdefault("reference", i)
+        elif "note" in h:
+            col.setdefault("notes", i)
+
+    if "invoice_number" not in col or "amount" not in col:
+        result.warnings.append(f"Sheet '{sheet_name}': missing invoice number or amount column, skipping")
+        return
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        vals = [c.value for c in row]
+        inv_num = str(vals[col["invoice_number"]] or "").strip()
+        if not inv_num:
+            continue
+
+        invoice = db.query(Invoice).filter(Invoice.invoice_number == inv_num).first()
+        if not invoice:
+            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: invoice '{inv_num}' not found")
+            continue
+
+        amount = _clean_rate(vals[col["amount"]])
+        if not amount or amount <= 0:
+            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: invalid amount")
+            continue
+
+        payment_date = _parse_date(vals[col["date"]]) if "date" in col else None
+        if not payment_date:
+            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: invalid or missing date")
+            continue
+
+        method = str(vals[col["method"]]).strip() if "method" in col and vals[col["method"]] else None
+        reference = str(vals[col["reference"]]).strip() if "reference" in col and vals[col["reference"]] else None
+        notes = str(vals[col["notes"]]).strip() if "notes" in col and vals[col["notes"]] else None
+
+        # Check for duplicate: same invoice, date, and amount
+        existing = db.query(Payment).filter(
+            Payment.invoice_id == invoice.id,
+            Payment.payment_date == payment_date,
+            Payment.amount == amount,
+        ).first()
+        if existing:
+            result.warnings.append(f"Sheet '{sheet_name}' row {row_idx}: duplicate payment skipped")
+            continue
+
+        payment = Payment(
+            invoice_id=invoice.id,
+            amount=amount,
+            payment_date=payment_date,
+            payment_method=method,
+            reference=reference,
+            notes=notes,
+        )
+        db.add(payment)
+        result.payments_created += 1
+
+
 def import_excel(db: DbSession, file_path: str) -> ImportResult:
     result = ImportResult()
     wb = load_workbook(file_path, data_only=True)
@@ -183,18 +254,23 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
         headers = [str(c.value or "").strip().lower() for c in rows[0]]
         header_set = set(headers)
 
-        # Skip sheets that are clearly not session data (payments, invoices, summaries)
+        # Detect sheet type by headers
+        header_joined = " ".join(headers)
         payment_markers = {"payment method", "reference", "invoice number"}
         invoice_markers = {"invoice number", "due date", "tax rate", "tax rate %", "tax amount", "subtotal"}
-        summary_markers = {"currency", "payment terms", "email"}
-        if payment_markers & header_set and "duration" not in " ".join(headers):
-            result.warnings.append(f"Sheet '{sheet_name}': looks like payment data, skipping (import only supports sessions)")
-            continue
-        if invoice_markers & header_set and "duration" not in " ".join(headers):
-            result.warnings.append(f"Sheet '{sheet_name}': looks like invoice data, skipping (import only supports sessions)")
-            continue
+        is_payment_sheet = len(payment_markers & header_set) >= 2 and "duration" not in header_joined
+        is_invoice_sheet = len(invoice_markers & header_set) >= 3 and "duration" not in header_joined
+
         if sheet_name.lower().strip() in ("client summary", "clients", "client list", "summary"):
             continue  # Already processed in pre-pass
+
+        if is_invoice_sheet and not is_payment_sheet:
+            result.warnings.append(f"Sheet '{sheet_name}': contains invoice data, skipping (re-importing invoices is not supported)")
+            continue
+
+        if is_payment_sheet:
+            _import_payments(db, sheet_name, rows, headers, result)
+            continue
 
         col_map = {}
         for i, h in enumerate(headers):

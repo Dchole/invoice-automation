@@ -37,6 +37,7 @@ def upload_excel(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
     return {
         "clients_created": result.clients_created,
         "sessions_created": result.sessions_created,
+        "payments_created": result.payments_created,
         "errors": result.errors,
         "warnings": result.warnings,
     }

@@ -5,6 +5,7 @@ import { useToast } from "../components/common/Toast";
 import { api } from "../api/client";
 import StatusBadge from "../components/common/StatusBadge";
 import Modal from "../components/common/Modal";
+import Pagination from "../components/common/Pagination";
 
 const empty = {
   name: "",
@@ -18,12 +19,15 @@ const empty = {
 };
 
 export default function ClientsPage() {
+  const [page, setPage] = useState(1);
+  const params = { page, per_page: 25 };
   const {
-    data: clients,
+    data: result,
     loading,
     error,
     refetch
-  } = useApi(() => api.getClients());
+  } = useApi(() => api.getClients(params), [page]);
+  const clients = result?.items || [];
   const toast = useToast();
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState(empty);
@@ -166,7 +170,7 @@ export default function ClientsPage() {
               </tr>
             </thead>
             <tbody>
-              {clients?.map(c => (
+              {clients.map(c => (
                 <tr key={c.id}>
                   <td
                     className="font-medium"
@@ -207,7 +211,7 @@ export default function ClientsPage() {
                   </td>
                 </tr>
               ))}
-              {clients?.length === 0 && (
+              {clients.length === 0 && (
                 <tr>
                   <td
                     colSpan={7}
@@ -221,6 +225,15 @@ export default function ClientsPage() {
             </tbody>
           </table>
         </div>
+        {result && (
+          <Pagination
+            page={result.page}
+            totalPages={result.total_pages}
+            total={result.total}
+            perPage={result.per_page}
+            onPageChange={setPage}
+          />
+        )}
       </div>
 
       <Modal

@@ -1,22 +1,31 @@
 from __future__ import annotations
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.database import get_db
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientRead, ClientUpdate
+from app.pagination import paginate
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
 
 
-@router.get("", response_model=List[ClientRead])
-def list_clients(status: Optional[str] = None, db: DbSession = Depends(get_db)):
+@router.get("")
+def list_clients(
+    status: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1),
+    per_page: int = Query(25, ge=1, le=100),
+    db: DbSession = Depends(get_db),
+):
     q = db.query(Client)
     if status:
         q = q.filter(Client.status == status)
-    return q.order_by(Client.name).all()
+    q = q.order_by(Client.name)
+    if page is not None:
+        return paginate(q, page, per_page)
+    return q.all()
 
 
 @router.post("", response_model=ClientRead, status_code=201)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.database import get_db
@@ -52,5 +53,14 @@ def delete_client(client_id: int, db: DbSession = Depends(get_db)):
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(404, "Client not found")
-    db.delete(client)
+    try:
+        db.delete(client)
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "Cannot delete client with existing sessions or invoices. "
+            "Remove them first.",
+        )
     db.commit()

@@ -278,8 +278,14 @@ def _import_invoices(
 
         # Resolve client by email first, then name
         client = None
-        client_name = str(vals[col["client"]] or "").strip() if "client" in col else None
-        client_email = str(vals[col["email"]] or "").strip() if "email" in col and vals[col.get("email", -1)] else None
+        client_name = (
+            str(vals[col["client"]] or "").strip() if "client" in col else None
+        )
+        client_email = (
+            str(vals[col["email"]] or "").strip()
+            if "email" in col and vals[col.get("email", -1)]
+            else None
+        )
         if client_name or client_email:
             client = _resolve_client(
                 db, client_cache, email_cache, client_name, client_email, result
@@ -511,7 +517,9 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
 
     # Pass 1: invoices (so payment references resolve)
     for sheet_name, rows, headers in invoice_sheets:
-        _import_invoices(db, sheet_name, rows, headers, client_cache, email_cache, result)
+        _import_invoices(
+            db, sheet_name, rows, headers, client_cache, email_cache, result
+        )
     db.flush()
 
     # Pass 2: payments
@@ -562,7 +570,13 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
             )
             rate = _clean_rate(vals[col_map["rate"]]) if "rate" in col_map else None
             client = _resolve_client(
-                db, client_cache, email_cache, client_name, client_email, result, rate=rate
+                db,
+                client_cache,
+                email_cache,
+                client_name,
+                client_email,
+                result,
+                rate=rate,
             )
             if not client:
                 result.errors.append(

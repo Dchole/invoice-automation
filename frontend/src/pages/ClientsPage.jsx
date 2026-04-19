@@ -191,17 +191,19 @@ export default function ClientsPage() {
                     >
                       Edit
                     </button>
-                    <button
-                      onClick={() => remove(c.id)}
-                      disabled={deletingId === c.id}
-                      className="text-xs font-medium transition-colors duration-150"
-                      style={{
-                        color: "var(--color-status-red)",
-                        opacity: deletingId === c.id ? 0.4 : 1
-                      }}
-                    >
-                      {deletingId === c.id ? "Deleting..." : "Delete"}
-                    </button>
+                    {c.session_count === 0 && (
+                      <button
+                        onClick={() => remove(c.id)}
+                        disabled={deletingId === c.id}
+                        className="text-xs font-medium transition-colors duration-150"
+                        style={{
+                          color: "var(--color-status-red)",
+                          opacity: deletingId === c.id ? 0.4 : 1
+                        }}
+                      >
+                        {deletingId === c.id ? "Deleting..." : "Delete"}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -30,3 +30,7 @@ class Client(Base):
 
     sessions = relationship("Session", back_populates="client", lazy="selectin")
     invoices = relationship("Invoice", back_populates="client", lazy="selectin")
+
+    @property
+    def session_count(self) -> int:
+        return len(self.sessions)

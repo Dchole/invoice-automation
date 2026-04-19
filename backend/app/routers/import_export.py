@@ -15,6 +15,7 @@ from app.models.payment import Payment
 from app.models.client import Client
 from app.models.session import Session as SessionModel
 from app.services.excel_importer import import_excel
+from app.services.csv_importer import import_csv
 
 router = APIRouter(prefix="/api/import", tags=["import/export"])
 
@@ -42,6 +43,25 @@ def upload_excel(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
         "sessions_created": result.sessions_created,
         "invoices_created": result.invoices_created,
         "payments_created": result.payments_created,
+        "errors": result.errors,
+        "warnings": result.warnings,
+    }
+
+
+@router.post("/csv")
+def upload_csv(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(400, "Only .csv files are supported")
+
+    try:
+        content = file.file.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(400, "CSV file must be UTF-8 encoded")
+    result = import_csv(db, content)
+    return {
+        "clients_created": result.clients_created,
+        "sessions_created": result.sessions_created,
         "errors": result.errors,
         "warnings": result.warnings,
     }
@@ -152,6 +172,108 @@ def export_payments_csv(db: DbSession = Depends(get_db)):
         output,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=payments_export.csv"},
+    )
+
+
+@router.get("/export/invoices-excel")
+def export_invoices_excel(db: DbSession = Depends(get_db)):
+    """Export all invoices as Excel (.xlsx) for accounting software."""
+    invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).all()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Invoices"
+    ws.append(
+        [
+            "Invoice Number",
+            "Client",
+            "Client Email",
+            "Issue Date",
+            "Due Date",
+            "Subtotal",
+            "Tax Rate %",
+            "Tax Amount",
+            "Total",
+            "Amount Paid",
+            "Balance",
+            "Currency",
+            "Status",
+            "Sent Date",
+            "Paid Date",
+        ]
+    )
+    for inv in invoices:
+        client = db.get(Client, inv.client_id)
+        balance = float(inv.total) - float(inv.amount_paid)
+        ws.append(
+            [
+                inv.invoice_number,
+                client.name if client else "",
+                client.email if client and client.email else "",
+                str(inv.issue_date),
+                str(inv.due_date),
+                float(inv.subtotal),
+                float(inv.tax_rate),
+                float(inv.tax_amount),
+                float(inv.total),
+                float(inv.amount_paid),
+                balance,
+                inv.currency,
+                inv.status,
+                str(inv.sent_at or ""),
+                str(inv.paid_at or ""),
+            ]
+        )
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=invoices_export.xlsx"},
+    )
+
+
+@router.get("/export/payments-excel")
+def export_payments_excel(db: DbSession = Depends(get_db)):
+    """Export all payments as Excel (.xlsx) for accounting software."""
+    payments = db.query(Payment).order_by(Payment.payment_date.desc()).all()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Payments"
+    ws.append(
+        [
+            "Date",
+            "Invoice Number",
+            "Client",
+            "Client Email",
+            "Amount",
+            "Payment Method",
+            "Reference",
+            "Notes",
+        ]
+    )
+    for p in payments:
+        inv = db.get(Invoice, p.invoice_id)
+        client = db.get(Client, inv.client_id) if inv else None
+        ws.append(
+            [
+                str(p.payment_date),
+                inv.invoice_number if inv else "",
+                client.name if client else "",
+                client.email if client and client.email else "",
+                float(p.amount),
+                p.payment_method or "",
+                p.reference or "",
+                p.notes or "",
+            ]
+        )
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=payments_export.xlsx"},
     )
 
 

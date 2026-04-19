@@ -1,6 +1,99 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { api } from "../api/client";
-import { Upload, CheckCircle, AlertCircle, Download } from "lucide-react";
+import {
+  Upload,
+  CheckCircle,
+  AlertCircle,
+  Download,
+  ChevronDown
+} from "lucide-react";
+
+function ExportPopover({ label, csvHref, excelHref }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef();
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = e => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+        style={{
+          backgroundColor: "var(--color-canvas-raised)",
+          border: "1px solid var(--color-border)",
+          color: "var(--color-text-secondary)"
+        }}
+      >
+        <Download size={15} />
+        {label}
+        <ChevronDown size={14} style={{ opacity: 0.5 }} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute top-full left-0 mt-1 rounded-lg py-1 z-10 min-w-[140px] animate-fade-in"
+          style={{
+            backgroundColor: "var(--color-canvas-raised)",
+            border: "1px solid var(--color-border)",
+            boxShadow: "var(--shadow-card)"
+          }}
+        >
+          <a
+            href={csvHref}
+            download
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-4 py-2 text-sm transition-colors duration-100"
+            style={{ color: "var(--color-text-secondary)" }}
+            onMouseEnter={e =>
+              (e.currentTarget.style.backgroundColor =
+                "var(--color-accent-muted)")
+            }
+            onMouseLeave={e =>
+              (e.currentTarget.style.backgroundColor = "transparent")
+            }
+          >
+            CSV
+          </a>
+          <a
+            href={excelHref}
+            download
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-4 py-2 text-sm transition-colors duration-100"
+            style={{ color: "var(--color-text-secondary)" }}
+            onMouseEnter={e =>
+              (e.currentTarget.style.backgroundColor =
+                "var(--color-accent-muted)")
+            }
+            onMouseLeave={e =>
+              (e.currentTarget.style.backgroundColor = "transparent")
+            }
+          >
+            Excel
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ImportPage() {
   const fileRef = useRef();
@@ -13,7 +106,15 @@ export default function ImportPage() {
     setUploading(true);
     setResult(null);
     try {
-      const res = await api.uploadExcel(file);
+      const ext = file.name.toLowerCase();
+      let res;
+      if (ext.endsWith(".csv")) {
+        res = await api.uploadCsv(file);
+      } else if (ext.endsWith(".xlsx")) {
+        res = await api.uploadExcel(file);
+      } else {
+        throw new Error("Unsupported file type. Please upload a .csv or .xlsx file.");
+      }
       setResult(res);
     } catch (e) {
       setResult({ error: e.message });
@@ -36,14 +137,14 @@ export default function ImportPage() {
           color: "var(--color-text-primary)"
         }}
       >
-        Import from Excel
+        Import Data
       </h1>
       <p
         className="text-sm mb-8"
         style={{ color: "var(--color-text-tertiary)" }}
       >
-        Upload your Excel spreadsheet to import clients and sessions. The system
-        will read all tabs and auto-detect columns.
+        Upload an Excel or CSV file to import clients and sessions. The system
+        will auto-detect columns.
       </p>
 
       {/* Drop zone */}
@@ -88,15 +189,15 @@ export default function ImportPage() {
         >
           {uploading
             ? "Uploading..."
-            : "Drag & drop your .xlsx file here, or click to browse"}
+            : "Drag & drop your .xlsx or .csv file here, or click to browse"}
         </p>
         <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-          Supports .xlsx and .xls files
+          Supports .xlsx and .csv files
         </p>
         <input
           ref={fileRef}
           type="file"
-          accept=".xlsx,.xls"
+          accept=".xlsx,.csv"
           className="hidden"
           onChange={e => handleFile(e.target.files[0])}
         />
@@ -164,13 +265,13 @@ export default function ImportPage() {
                   color: "var(--color-status-blue)"
                 }}
               >
-                {result.invoices_created}
+                {result.sessions_created}
               </p>
               <p
                 className="text-xs mt-0.5"
                 style={{ color: "var(--color-status-blue)" }}
               >
-                Invoices Created
+                Sessions Imported
               </p>
             </div>
             <div
@@ -187,13 +288,13 @@ export default function ImportPage() {
                   color: "var(--color-status-blue)"
                 }}
               >
-                {result.sessions_created}
+                {result.invoices_created}
               </p>
               <p
                 className="text-xs mt-0.5"
                 style={{ color: "var(--color-status-blue)" }}
               >
-                Sessions Imported
+                Invoices Created
               </p>
             </div>
             <div
@@ -294,8 +395,8 @@ export default function ImportPage() {
           className="text-sm mb-5"
           style={{ color: "var(--color-text-tertiary)" }}
         >
-          Download your data as CSV files for accounting software or as a
-          database backup.
+          Download your data as CSV or Excel files for accounting software, or
+          as a database backup.
         </p>
         <div className="flex flex-wrap gap-3">
           <a
@@ -310,32 +411,16 @@ export default function ImportPage() {
             <Download size={15} />
             Full Export (.xlsx)
           </a>
-          <a
-            href={api.exportInvoicesCsv()}
-            download
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
-            style={{
-              backgroundColor: "var(--color-canvas-raised)",
-              border: "1px solid var(--color-border)",
-              color: "var(--color-text-secondary)"
-            }}
-          >
-            <Download size={15} />
-            Invoices CSV
-          </a>
-          <a
-            href={api.exportPaymentsCsv()}
-            download
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
-            style={{
-              backgroundColor: "var(--color-canvas-raised)",
-              border: "1px solid var(--color-border)",
-              color: "var(--color-text-secondary)"
-            }}
-          >
-            <Download size={15} />
-            Payments CSV
-          </a>
+          <ExportPopover
+            label="Invoices"
+            csvHref={api.exportInvoicesCsv()}
+            excelHref={api.exportInvoicesExcel()}
+          />
+          <ExportPopover
+            label="Payments"
+            csvHref={api.exportPaymentsCsv()}
+            excelHref={api.exportPaymentsExcel()}
+          />
           <a
             href={api.exportBackup()}
             download

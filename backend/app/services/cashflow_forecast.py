@@ -46,7 +46,9 @@ def get_summary(db: DbSession) -> dict:
 
     revenue_last_month = (
         db.query(func.coalesce(func.sum(Payment.amount), 0))
-        .filter(Payment.payment_date >= last_month_start, Payment.payment_date < month_start)
+        .filter(
+            Payment.payment_date >= last_month_start, Payment.payment_date < month_start
+        )
         .scalar()
     )
 
@@ -56,17 +58,33 @@ def get_summary(db: DbSession) -> dict:
         .scalar()
     )
 
-    total_clients = db.query(func.count(Client.id)).filter(Client.status == "active").scalar()
+    total_clients = (
+        db.query(func.count(Client.id)).filter(Client.status == "active").scalar()
+    )
     total_invoices = db.query(func.count(Invoice.id)).scalar()
-    paid_invoices = db.query(func.count(Invoice.id)).filter(Invoice.status == "paid").scalar()
-    overdue_invoices = db.query(func.count(Invoice.id)).filter(Invoice.status == "overdue").scalar()
-    draft_invoices = db.query(func.count(Invoice.id)).filter(Invoice.status == "draft").scalar()
-    sent_invoices = db.query(func.count(Invoice.id)).filter(Invoice.status == "sent").scalar()
-    unbilled_sessions = db.query(func.count(Session.id)).filter(Session.status == "unbilled").scalar()
+    paid_invoices = (
+        db.query(func.count(Invoice.id)).filter(Invoice.status == "paid").scalar()
+    )
+    overdue_invoices = (
+        db.query(func.count(Invoice.id)).filter(Invoice.status == "overdue").scalar()
+    )
+    draft_invoices = (
+        db.query(func.count(Invoice.id)).filter(Invoice.status == "draft").scalar()
+    )
+    sent_invoices = (
+        db.query(func.count(Invoice.id)).filter(Invoice.status == "sent").scalar()
+    )
+    unbilled_sessions = (
+        db.query(func.count(Session.id)).filter(Session.status == "unbilled").scalar()
+    )
 
     # Collection rate: paid invoices / (paid + sent + overdue) × 100
     total_sent_or_resolved = paid_invoices + sent_invoices + overdue_invoices
-    collection_rate = round((paid_invoices / total_sent_or_resolved) * 100, 1) if total_sent_or_resolved > 0 else None
+    collection_rate = (
+        round((paid_invoices / total_sent_or_resolved) * 100, 1)
+        if total_sent_or_resolved > 0
+        else None
+    )
 
     # Average invoicing speed: days from session date to invoice issue_date
     invoiced_sessions = (
@@ -76,8 +94,14 @@ def get_summary(db: DbSession) -> dict:
         .all()
     )
     if invoiced_sessions:
-        total_days = sum(max(0, (inv_date - s.date).days) for s, inv_date in invoiced_sessions if inv_date and s.date)
-        avg_invoicing_days = round(total_days / len(invoiced_sessions), 1) if invoiced_sessions else None
+        total_days = sum(
+            max(0, (inv_date - s.date).days)
+            for s, inv_date in invoiced_sessions
+            if inv_date and s.date
+        )
+        avg_invoicing_days = (
+            round(total_days / len(invoiced_sessions), 1) if invoiced_sessions else None
+        )
     else:
         avg_invoicing_days = None
 
@@ -138,7 +162,11 @@ def get_client_scores(db: DbSession) -> List[dict]:
         paid_invoices = [i for i in invoices if i.paid_at and i.sent_at]
         if paid_invoices:
             avg_days = sum(
-                (i.paid_at.date() - i.issue_date).days if hasattr(i.paid_at, 'date') else (i.paid_at - i.issue_date).days
+                (
+                    (i.paid_at.date() - i.issue_date).days
+                    if hasattr(i.paid_at, "date")
+                    else (i.paid_at - i.issue_date).days
+                )
                 for i in paid_invoices
             ) / len(paid_invoices)
         else:
@@ -159,16 +187,18 @@ def get_client_scores(db: DbSession) -> List[dict]:
         else:
             risk = "good"
 
-        scores.append({
-            "client_id": c.id,
-            "client_name": c.name,
-            "outstanding_balance": outstanding,
-            "total_invoiced": total_invoiced,
-            "total_paid": total_paid,
-            "avg_payment_days": round(avg_days, 1) if avg_days else None,
-            "last_payment_date": str(last_payment) if last_payment else None,
-            "status": risk,
-        })
+        scores.append(
+            {
+                "client_id": c.id,
+                "client_name": c.name,
+                "outstanding_balance": outstanding,
+                "total_invoiced": total_invoiced,
+                "total_paid": total_paid,
+                "avg_payment_days": round(avg_days, 1) if avg_days else None,
+                "last_payment_date": str(last_payment) if last_payment else None,
+                "status": risk,
+            }
+        )
 
     return scores
 
@@ -179,14 +209,23 @@ def _get_client_avg_payment_days(db: DbSession) -> dict[int, float]:
     result = {}
     for c in clients:
         paid_invoices = [
-            i for i in db.query(Invoice).filter(
-                Invoice.client_id == c.id, Invoice.status == "paid",
-                Invoice.paid_at.isnot(None), Invoice.issue_date.isnot(None)
-            ).all()
+            i
+            for i in db.query(Invoice)
+            .filter(
+                Invoice.client_id == c.id,
+                Invoice.status == "paid",
+                Invoice.paid_at.isnot(None),
+                Invoice.issue_date.isnot(None),
+            )
+            .all()
         ]
         if paid_invoices:
             total_days = sum(
-                (i.paid_at.date() - i.issue_date).days if hasattr(i.paid_at, 'date') else (i.paid_at - i.issue_date).days
+                (
+                    (i.paid_at.date() - i.issue_date).days
+                    if hasattr(i.paid_at, "date")
+                    else (i.paid_at - i.issue_date).days
+                )
                 for i in paid_invoices
             )
             result[c.id] = total_days / len(paid_invoices)
@@ -220,7 +259,7 @@ def get_cashflow_forecast(db: DbSession, days: int = 90) -> List[dict]:
             expected_date = max(expected_date, today)  # Can't be in the past
         else:
             # No history — assume payment on due date
-            expected_date = max(inv.due_date, today)
+            expected_date = max(inv.due_date, today) if inv.due_date else today
 
         if (expected_date - today).days > days:
             continue
@@ -235,6 +274,12 @@ def get_cashflow_forecast(db: DbSession, days: int = 90) -> List[dict]:
         amt = daily.get(key, 0)
         cumulative += amt
         if amt > 0 or i == 0 or i == days:
-            points.append({"date": key, "expected_amount": round(amt, 2), "cumulative": round(cumulative, 2)})
+            points.append(
+                {
+                    "date": key,
+                    "expected_amount": round(amt, 2),
+                    "cumulative": round(cumulative, 2),
+                }
+            )
 
     return points

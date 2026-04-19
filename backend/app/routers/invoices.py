@@ -14,7 +14,12 @@ from app.models.invoice import Invoice
 from app.models.session import Session
 from app.models.client import Client
 from app.models.reminder import Reminder
-from app.schemas.invoice import InvoiceCreate, InvoiceRead, InvoiceUpdate, InvoiceGenerate
+from app.schemas.invoice import (
+    InvoiceCreate,
+    InvoiceRead,
+    InvoiceUpdate,
+    InvoiceGenerate,
+)
 from app.config import settings
 from app.services.invoice_email import build_invoice_email
 from app.pagination import paginate
@@ -77,11 +82,15 @@ def create_invoice(data: InvoiceCreate, db: DbSession = Depends(get_db)):
 
     sessions = []
     if data.session_ids:
-        sessions = db.query(Session).filter(
-            Session.id.in_(data.session_ids),
-            Session.client_id == data.client_id,
-            Session.status == "unbilled",
-        ).all()
+        sessions = (
+            db.query(Session)
+            .filter(
+                Session.id.in_(data.session_ids),
+                Session.client_id == data.client_id,
+                Session.status == "unbilled",
+            )
+            .all()
+        )
         if len(sessions) != len(data.session_ids):
             raise HTTPException(400, "Some sessions not found or already invoiced")
 
@@ -136,8 +145,10 @@ def generate_invoices(data: InvoiceGenerate, db: DbSession = Depends(get_db)):
     invoices = []
     for cid, sessions in by_client.items():
         client = db.get(Client, cid)
+        if not client:
+            continue
         issue = date.today()
-        due = issue + timedelta(days=client.payment_terms)
+        due = issue + timedelta(days=client.payment_terms or 30)
         subtotal = sum(float(s.amount) for s in sessions)
         tax_amount = round(subtotal * (data.tax_rate / 100), 2)
         total = round(subtotal + tax_amount, 2)
@@ -151,7 +162,7 @@ def generate_invoices(data: InvoiceGenerate, db: DbSession = Depends(get_db)):
             tax_rate=data.tax_rate,
             tax_amount=tax_amount,
             total=total,
-            currency=client.currency,
+            currency=client.currency or "CAD",
             status="draft",
         )
         db.add(inv)
@@ -179,7 +190,9 @@ def get_invoice(invoice_id: int, db: DbSession = Depends(get_db)):
 
 
 @router.put("/{invoice_id}", response_model=InvoiceRead)
-def update_invoice(invoice_id: int, data: InvoiceUpdate, db: DbSession = Depends(get_db)):
+def update_invoice(
+    invoice_id: int, data: InvoiceUpdate, db: DbSession = Depends(get_db)
+):
     inv = db.get(Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, "Invoice not found")
@@ -248,7 +261,9 @@ def send_invoice(invoice_id: int, db: DbSession = Depends(get_db)):
                 logger.error(f"Failed to email invoice to {client.email}: {e}")
                 raise HTTPException(500, f"Failed to send email: {e}")
     else:
-        logger.warning(f"Client {client.name} has no email — invoice marked sent but not emailed")
+        logger.warning(
+            f"Client {client.name} has no email — invoice marked sent but not emailed"
+        )
 
     inv.status = "sent"
     inv.sent_at = datetime.utcnow()

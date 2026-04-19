@@ -5,7 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.database import Base, engine, SessionLocal
-from app.routers import clients, sessions, invoices, payments, reminders, dashboard, import_export
+from app.routers import (
+    clients,
+    sessions,
+    invoices,
+    payments,
+    reminders,
+    dashboard,
+    import_export,
+)
 from app.services.reminder_engine import process_due_reminders, check_overdue_invoices
 
 logger = logging.getLogger(__name__)
@@ -20,7 +28,9 @@ def _run_reminder_jobs():
         overdue = check_overdue_invoices(db)
         sent = process_due_reminders(db)
         if overdue or sent:
-            logger.info(f"Scheduler: marked {overdue} overdue, sent {len(sent)} reminders")
+            logger.info(
+                f"Scheduler: marked {overdue} overdue, sent {len(sent)} reminders"
+            )
     except Exception as e:
         logger.error(f"Scheduler error: {e}")
     finally:
@@ -29,7 +39,11 @@ def _run_reminder_jobs():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise
     scheduler.add_job(_run_reminder_jobs, "interval", hours=1, id="reminder_check")
     scheduler.start()
     logger.info("APScheduler started — checking reminders every hour")

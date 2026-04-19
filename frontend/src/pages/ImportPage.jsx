@@ -8,7 +8,7 @@ import {
   ChevronDown
 } from "lucide-react";
 
-function ExportPopover({ label, csvHref, excelHref }) {
+function ExportPopover({ label, csvHref, excelHref, primary }) {
   const [open, setOpen] = useState(false);
   const ref = useRef();
 
@@ -38,14 +38,14 @@ function ExportPopover({ label, csvHref, excelHref }) {
         aria-expanded={open}
         className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
         style={{
-          backgroundColor: "var(--color-canvas-raised)",
-          border: "1px solid var(--color-border)",
-          color: "var(--color-text-secondary)"
+          backgroundColor: primary ? "var(--color-accent)" : "var(--color-canvas-raised)",
+          border: primary ? "none" : "1px solid var(--color-border)",
+          color: primary ? "white" : "var(--color-text-secondary)"
         }}
       >
         <Download size={15} />
         {label}
-        <ChevronDown size={14} style={{ opacity: 0.5 }} />
+        <ChevronDown size={14} style={{ opacity: primary ? 0.7 : 0.5 }} />
       </button>
       {open && (
         <div
@@ -403,6 +403,7 @@ export default function ImportPage() {
             label="Full Export"
             csvHref={api.exportCsv()}
             excelHref={api.exportExcel()}
+            primary
           />
           <ExportPopover
             label="Invoices"

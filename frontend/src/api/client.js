@@ -86,6 +86,8 @@ export const api = {
   // Export
   exportInvoicesCsv: () => `${BASE}/import/export/invoices-csv`,
   exportPaymentsCsv: () => `${BASE}/import/export/payments-csv`,
+  exportInvoicesExcel: () => `${BASE}/import/export/invoices-excel`,
+  exportPaymentsExcel: () => `${BASE}/import/export/payments-excel`,
   exportExcel: () => `${BASE}/import/export/excel`,
   exportBackup: () => `${BASE}/import/export/backup`,
 
@@ -96,6 +98,21 @@ export const api = {
     let res;
     try {
       res = await fetch(`${BASE}/import/excel`, { method: "POST", body: form });
+    } catch (e) {
+      throw new Error("Network error — check your connection");
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Upload failed");
+    }
+    return res.json();
+  },
+  uploadCsv: async file => {
+    const form = new FormData();
+    form.append("file", file);
+    let res;
+    try {
+      res = await fetch(`${BASE}/import/csv`, { method: "POST", body: form });
     } catch (e) {
       throw new Error("Network error — check your connection");
     }

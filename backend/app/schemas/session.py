@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, date, time
 from typing import Optional
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, field_validator
 
 
 class SessionBase(BaseModel):
@@ -13,6 +13,13 @@ class SessionBase(BaseModel):
     hourly_rate: float
     description: Optional[str] = None
 
+    @field_validator("duration_minutes")
+    @classmethod
+    def duration_must_be_positive(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("duration_minutes must be greater than 0")
+        return v
+
     @model_validator(mode="after")
     def compute_duration(self):
         if self.duration_minutes is None and self.start_time and self.end_time:
@@ -20,7 +27,11 @@ class SessionBase(BaseModel):
             end_dt = datetime.combine(datetime.min, self.end_time)
             self.duration_minutes = int((end_dt - start_dt).total_seconds() / 60)
         if self.duration_minutes is None:
-            raise ValueError("Either duration_minutes or both start_time and end_time are required")
+            raise ValueError(
+                "Either duration_minutes or both start_time and end_time are required"
+            )
+        if self.duration_minutes <= 0:
+            raise ValueError("duration_minutes must be greater than 0")
         return self
 
 

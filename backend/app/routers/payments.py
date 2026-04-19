@@ -70,7 +70,11 @@ def _send_payment_confirmation(db: DbSession, invoice: Invoice, payment: Payment
         return
 
     remaining = float(invoice.total) - float(invoice.amount_paid)
-    status_msg = "Your invoice is now paid in full." if remaining <= 0 else f"Remaining balance: ${remaining:,.2f} {invoice.currency}."
+    status_msg = (
+        "Your invoice is now paid in full."
+        if remaining <= 0
+        else f"Remaining balance: ${remaining:,.2f} {invoice.currency}."
+    )
 
     subject = f"Payment received — Invoice {invoice.invoice_number}"
     body = (
@@ -82,7 +86,9 @@ def _send_payment_confirmation(db: DbSession, invoice: Invoice, payment: Payment
     )
 
     if settings.mock_email:
-        logger.info(f"[MOCK EMAIL] Payment confirmation for {invoice.invoice_number} to {client.email}")
+        logger.info(
+            f"[MOCK EMAIL] Payment confirmation for {invoice.invoice_number} to {client.email}"
+        )
         return
 
     msg = MIMEMultipart()
@@ -95,7 +101,9 @@ def _send_payment_confirmation(db: DbSession, invoice: Invoice, payment: Payment
             server.starttls()
             server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(msg)
-        logger.info(f"Payment confirmation sent to {client.email} for {invoice.invoice_number}")
+        logger.info(
+            f"Payment confirmation sent to {client.email} for {invoice.invoice_number}"
+        )
     except Exception as e:
         logger.error(f"Failed to send payment confirmation: {e}")
 
@@ -103,9 +111,11 @@ def _send_payment_confirmation(db: DbSession, invoice: Invoice, payment: Payment
 @router.post("/bulk", response_model=List[PaymentRead], status_code=201)
 def create_payments_bulk(items: List[PaymentCreate], db: DbSession = Depends(get_db)):
     results = []
+    skipped = []
     for data in items:
         invoice = db.get(Invoice, data.invoice_id)
         if not invoice:
+            skipped.append(data.invoice_id)
             continue
         payment = Payment(**data.model_dump())
         db.add(payment)
@@ -122,6 +132,8 @@ def create_payments_bulk(items: List[PaymentCreate], db: DbSession = Depends(get
     db.commit()
     for p in results:
         db.refresh(p)
+    if skipped:
+        logger.warning(f"Bulk payment: skipped missing invoice IDs {skipped}")
     return results
 
 

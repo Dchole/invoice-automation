@@ -19,11 +19,31 @@ def _next_invoice_number(db: DbSession) -> str:
         .order_by(Invoice.invoice_number.desc())
         .first()
     )
-    seq = int(last.invoice_number.split("-")[-1]) + 1 if last else 1
+    if last and last.invoice_number:
+        try:
+            seq = int(last.invoice_number.split("-")[-1]) + 1
+        except (ValueError, IndexError):
+            # Malformed number — find max valid sequence to avoid collisions
+            all_invoices = (
+                db.query(Invoice)
+                .filter(Invoice.invoice_number.like(f"{prefix}%"))
+                .all()
+            )
+            seq = 1
+            for inv in all_invoices:
+                try:
+                    s = int(inv.invoice_number.split("-")[-1])
+                    seq = max(seq, s + 1)
+                except (ValueError, IndexError):
+                    continue
+    else:
+        seq = 1
     return f"{prefix}{seq:04d}"
 
 
-def generate_for_client(db: DbSession, client_id: int, tax_rate: float = 0) -> Optional[Invoice]:
+def generate_for_client(
+    db: DbSession, client_id: int, tax_rate: float = 0
+) -> Optional[Invoice]:
     client = db.get(Client, client_id)
     if not client:
         return None
@@ -37,7 +57,7 @@ def generate_for_client(db: DbSession, client_id: int, tax_rate: float = 0) -> O
         return None
 
     issue = date.today()
-    due = issue + timedelta(days=client.payment_terms)
+    due = issue + timedelta(days=client.payment_terms or settings.default_payment_terms)
     subtotal = sum(float(s.amount) for s in unbilled)
     tax_amount = round(subtotal * (tax_rate / 100), 2)
     total = round(subtotal + tax_amount, 2)

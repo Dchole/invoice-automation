@@ -36,6 +36,8 @@ class ClientUpdate(BaseModel):
 class ClientRead(ClientBase):
     id: int
     status: str
+    session_count: int = 0
+    invoice_count: int = 0
     created_at: datetime
     updated_at: datetime
 

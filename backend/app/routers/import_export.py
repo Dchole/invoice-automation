@@ -23,11 +23,12 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
 
 @router.post("/excel")
 def upload_excel(file: UploadFile = File(...), db: DbSession = Depends(get_db)):
-    if not file.filename.endswith((".xlsx", ".xls")):
+    safe_filename = Path(file.filename).name
+    if not safe_filename.endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Only .xlsx or .xls files are supported")
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / f"import_{file.filename}"
+    dest = UPLOAD_DIR / f"import_{safe_filename}"
     try:
         with open(dest, "wb") as f:
             shutil.copyfileobj(file.file, f)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session as DbSession
 
 from app.database import get_db
@@ -152,9 +152,5 @@ def dashboard_client_scores(
 
 
 @router.get("/cashflow", response_model=List[CashFlowPoint])
-def dashboard_cashflow(days: int = 90, db: DbSession = Depends(get_db)):
-    if days <= 0:
-        from fastapi import HTTPException
-
-        raise HTTPException(400, "days must be a positive integer")
+def dashboard_cashflow(days: int = Query(default=90, gt=0), db: DbSession = Depends(get_db)):
     return get_cashflow_forecast(db, days)

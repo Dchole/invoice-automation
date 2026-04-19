@@ -34,3 +34,7 @@ class Client(Base):
     @property
     def session_count(self) -> int:
         return len(self.sessions)
+
+    @property
+    def invoice_count(self) -> int:
+        return len(self.invoices)

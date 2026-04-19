@@ -148,7 +148,7 @@ def generate_invoices(data: InvoiceGenerate, db: DbSession = Depends(get_db)):
         if not client:
             continue
         issue = date.today()
-        due = issue + timedelta(days=client.payment_terms or 30)
+        due = issue + timedelta(days=client.payment_terms or settings.default_payment_terms)
         subtotal = sum(float(s.amount) for s in sessions)
         tax_amount = round(subtotal * (data.tax_rate / 100), 2)
         total = round(subtotal + tax_amount, 2)

@@ -133,11 +133,7 @@ def create_payments_bulk(items: List[PaymentCreate], db: DbSession = Depends(get
     for p in results:
         db.refresh(p)
     if skipped:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            f"Bulk payment: skipped missing invoice IDs {skipped}"
-        )
+        logger.warning(f"Bulk payment: skipped missing invoice IDs {skipped}")
     return results
 
 

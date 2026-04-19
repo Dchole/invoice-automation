@@ -30,6 +30,8 @@ class SessionBase(BaseModel):
             raise ValueError(
                 "Either duration_minutes or both start_time and end_time are required"
             )
+        if self.duration_minutes <= 0:
+            raise ValueError("duration_minutes must be greater than 0")
         return self
 
 

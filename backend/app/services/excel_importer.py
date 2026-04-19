@@ -5,6 +5,7 @@ from typing import Optional
 from pathlib import Path
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session as DbSession
+from sqlalchemy import func
 
 from app.models.client import Client
 from app.models.session import Session
@@ -116,7 +117,7 @@ def _resolve_client(
         email_key = email.strip().lower()
         if email_key in email_cache:
             return email_cache[email_key]
-        existing = db.query(Client).filter(Client.email == email).first()
+        existing = db.query(Client).filter(func.lower(Client.email) == email_key).first()
         if existing:
             email_cache[email_key] = existing
             client_cache[existing.name.lower()] = existing

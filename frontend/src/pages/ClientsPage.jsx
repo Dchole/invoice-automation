@@ -191,7 +191,7 @@ export default function ClientsPage() {
                     >
                       Edit
                     </button>
-                    {c.session_count === 0 && (
+                    {c.session_count === 0 && c.invoice_count === 0 && (
                       <button
                         onClick={() => remove(c.id)}
                         disabled={deletingId === c.id}

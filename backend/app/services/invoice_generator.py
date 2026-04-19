@@ -23,7 +23,19 @@ def _next_invoice_number(db: DbSession) -> str:
         try:
             seq = int(last.invoice_number.split("-")[-1]) + 1
         except (ValueError, IndexError):
+            # Malformed number — find max valid sequence to avoid collisions
+            all_invoices = (
+                db.query(Invoice)
+                .filter(Invoice.invoice_number.like(f"{prefix}%"))
+                .all()
+            )
             seq = 1
+            for inv in all_invoices:
+                try:
+                    s = int(inv.invoice_number.split("-")[-1])
+                    seq = max(seq, s + 1)
+                except (ValueError, IndexError):
+                    continue
     else:
         seq = 1
     return f"{prefix}{seq:04d}"

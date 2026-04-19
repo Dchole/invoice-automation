@@ -90,7 +90,7 @@ export default function DashboardPage() {
   } = useApi(() => api.getCashflow(forecastDays), [forecastDays]);
 
   const currencySymbol = currency || "Mixed";
-  const anyError = e1 || e2 || e3;
+  const anyError = e1 || e2 || e3 || e4;
 
   if (l1 || l2 || l3)
     return (

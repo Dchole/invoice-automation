@@ -22,6 +22,7 @@ from app.schemas.invoice import (
 )
 from app.config import settings
 from app.services.invoice_email import build_invoice_email
+from app.services.reminder_engine import schedule_reminders
 from app.pagination import paginate
 
 logger = logging.getLogger(__name__)
@@ -43,19 +44,6 @@ def _next_invoice_number(db: DbSession) -> str:
     else:
         seq = 1
     return f"{prefix}{seq:04d}"
-
-
-def _schedule_reminders(db: DbSession, invoice: Invoice):
-    """Schedule reminders relative to issue_date (when invoice is sent), not due_date."""
-    for i, days in enumerate(settings.reminder_days):
-        reminder_types = ["friendly", "due", "overdue", "escalation"]
-        r = Reminder(
-            invoice_id=invoice.id,
-            type=reminder_types[i] if i < len(reminder_types) else "escalation",
-            scheduled_date=invoice.issue_date + timedelta(days=days),
-            status="pending",
-        )
-        db.add(r)
 
 
 @router.get("")
@@ -121,7 +109,7 @@ def create_invoice(data: InvoiceCreate, db: DbSession = Depends(get_db)):
         s.invoice_id = invoice.id
         s.status = "invoiced"
 
-    _schedule_reminders(db, invoice)
+    schedule_reminders(db, invoice)
     db.commit()
     db.refresh(invoice)
     return invoice
@@ -148,7 +136,9 @@ def generate_invoices(data: InvoiceGenerate, db: DbSession = Depends(get_db)):
         if not client:
             continue
         issue = date.today()
-        due = issue + timedelta(days=client.payment_terms or settings.default_payment_terms)
+        due = issue + timedelta(
+            days=client.payment_terms or settings.default_payment_terms
+        )
         subtotal = sum(float(s.amount) for s in sessions)
         tax_amount = round(subtotal * (data.tax_rate / 100), 2)
         total = round(subtotal + tax_amount, 2)
@@ -172,7 +162,7 @@ def generate_invoices(data: InvoiceGenerate, db: DbSession = Depends(get_db)):
             s.invoice_id = inv.id
             s.status = "invoiced"
 
-        _schedule_reminders(db, inv)
+        schedule_reminders(db, inv)
         invoices.append(inv)
 
     db.commit()

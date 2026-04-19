@@ -3,7 +3,7 @@ import logging
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.reminder import Reminder
@@ -12,6 +12,38 @@ from app.models.client import Client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+REMINDER_TYPES = ["friendly", "due", "overdue", "escalation"]
+
+
+def schedule_reminders(db: DbSession, invoice: Invoice):
+    """Schedule reminders relative to issue_date for an invoice."""
+    for i, days in enumerate(settings.reminder_days):
+        r = Reminder(
+            invoice_id=invoice.id,
+            type=REMINDER_TYPES[i] if i < len(REMINDER_TYPES) else "escalation",
+            scheduled_date=invoice.issue_date + timedelta(days=days),
+            status="pending",
+        )
+        db.add(r)
+
+
+def schedule_reminders_for_unpaid(db: DbSession) -> int:
+    """Schedule reminders for all unpaid invoices that don't already have reminders."""
+    unpaid = (
+        db.query(Invoice)
+        .filter(Invoice.status.in_(["sent", "overdue", "viewed", "draft"]))
+        .all()
+    )
+    count = 0
+    for inv in unpaid:
+        existing = db.query(Reminder).filter(Reminder.invoice_id == inv.id).first()
+        if not existing:
+            schedule_reminders(db, inv)
+            count += 1
+    return count
+
 
 REMINDER_SUBJECTS = {
     "friendly": "Friendly reminder: Invoice {inv} is due soon",
@@ -78,12 +110,14 @@ def process_due_reminders(db: DbSession) -> list[dict]:
 
         r.status = "sent"
         r.sent_at = datetime.utcnow()
-        sent.append({
-            "reminder_id": r.id,
-            "invoice_number": invoice.invoice_number,
-            "type": r.type,
-            "client_id": invoice.client_id,
-        })
+        sent.append(
+            {
+                "reminder_id": r.id,
+                "invoice_number": invoice.invoice_number,
+                "type": r.type,
+                "client_id": invoice.client_id,
+            }
+        )
 
     db.commit()
     return sent
@@ -105,8 +139,12 @@ def _send_email(invoice: Invoice, reminder: Reminder, db: DbSession):
         "due_date": str(invoice.due_date),
     }
 
-    subject = REMINDER_SUBJECTS.get(reminder.type, "Invoice reminder: {inv}").format(**template_vars)
-    body = REMINDER_BODIES.get(reminder.type, "Please review invoice {inv}.").format(**template_vars)
+    subject = REMINDER_SUBJECTS.get(reminder.type, "Invoice reminder: {inv}").format(
+        **template_vars
+    )
+    body = REMINDER_BODIES.get(reminder.type, "Please review invoice {inv}.").format(
+        **template_vars
+    )
 
     msg = MIMEMultipart()
     msg["From"] = settings.smtp_from

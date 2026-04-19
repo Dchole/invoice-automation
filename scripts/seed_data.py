@@ -11,6 +11,7 @@ from app.models.session import Session
 from app.models.invoice import Invoice
 from app.models.payment import Payment
 from app.models.reminder import Reminder  # needed for relationship resolution
+from app.services.reminder_engine import schedule_reminders
 
 # --- Config ---
 NUM_CLIENTS = 100
@@ -22,30 +23,135 @@ PAYMENT_RATE = 0.90  # 90% of invoices are paid
 PAYMENT_METHODS = ["e-transfer", "check", "cash", "stripe", "paypal"]
 
 FIRST_NAMES = [
-    "Alice", "Bob", "Carlos", "Diana", "Erik", "Fatima", "George", "Hannah",
-    "Ivan", "Julia", "Kevin", "Laura", "Marco", "Nina", "Oscar", "Priya",
-    "Quinn", "Rachel", "Sam", "Tanya", "Uma", "Victor", "Wendy", "Xander",
-    "Yuki", "Zara", "Aaron", "Bella", "Chris", "Dina", "Ethan", "Fiona",
-    "Grant", "Holly", "Ian", "Jade", "Kyle", "Lena", "Mike", "Nora",
-    "Owen", "Paige", "Reed", "Sophie", "Tyler", "Ursula", "Vince", "Willa",
-    "Xavier", "Yvonne"
+    "Alice",
+    "Bob",
+    "Carlos",
+    "Diana",
+    "Erik",
+    "Fatima",
+    "George",
+    "Hannah",
+    "Ivan",
+    "Julia",
+    "Kevin",
+    "Laura",
+    "Marco",
+    "Nina",
+    "Oscar",
+    "Priya",
+    "Quinn",
+    "Rachel",
+    "Sam",
+    "Tanya",
+    "Uma",
+    "Victor",
+    "Wendy",
+    "Xander",
+    "Yuki",
+    "Zara",
+    "Aaron",
+    "Bella",
+    "Chris",
+    "Dina",
+    "Ethan",
+    "Fiona",
+    "Grant",
+    "Holly",
+    "Ian",
+    "Jade",
+    "Kyle",
+    "Lena",
+    "Mike",
+    "Nora",
+    "Owen",
+    "Paige",
+    "Reed",
+    "Sophie",
+    "Tyler",
+    "Ursula",
+    "Vince",
+    "Willa",
+    "Xavier",
+    "Yvonne",
 ]
 LAST_NAMES = [
-    "Anderson", "Baker", "Chen", "Diaz", "Evans", "Foster", "Garcia", "Hayes",
-    "Ivanov", "Jensen", "Kim", "Li", "Martinez", "Nguyen", "O'Brien", "Patel",
-    "Quinn", "Russo", "Silva", "Torres", "Ueda", "Valdez", "Walsh", "Xu",
-    "Yamamoto", "Zhang", "Abbott", "Brooks", "Clarke", "Davis", "Ellis",
-    "Fischer", "Green", "Hunt", "Jackson", "Knight", "Lee", "Moore", "Nash",
-    "Palmer", "Reeves", "Stone", "Thomas", "Underwood", "Vargas", "White",
-    "Young", "Zimmerman", "Black", "Cole"
+    "Anderson",
+    "Baker",
+    "Chen",
+    "Diaz",
+    "Evans",
+    "Foster",
+    "Garcia",
+    "Hayes",
+    "Ivanov",
+    "Jensen",
+    "Kim",
+    "Li",
+    "Martinez",
+    "Nguyen",
+    "O'Brien",
+    "Patel",
+    "Quinn",
+    "Russo",
+    "Silva",
+    "Torres",
+    "Ueda",
+    "Valdez",
+    "Walsh",
+    "Xu",
+    "Yamamoto",
+    "Zhang",
+    "Abbott",
+    "Brooks",
+    "Clarke",
+    "Davis",
+    "Ellis",
+    "Fischer",
+    "Green",
+    "Hunt",
+    "Jackson",
+    "Knight",
+    "Lee",
+    "Moore",
+    "Nash",
+    "Palmer",
+    "Reeves",
+    "Stone",
+    "Thomas",
+    "Underwood",
+    "Vargas",
+    "White",
+    "Young",
+    "Zimmerman",
+    "Black",
+    "Cole",
 ]
 COMPANIES = [
-    "Maple Leaf Studios", "Northern Lights Design", "Pacific Web Co", "Summit Digital",
-    "Horizon Analytics", "Blue Ridge Consulting", "Evergreen Labs", "Silver Creek Media",
-    "Wildfire Creative", "Cascade Software", "Pinnacle Solutions", "Lakeside Tech",
-    "Redwood Strategies", "Trailblaze Marketing", "Frostbite Games", "Coral Reef Apps",
-    "Ironclad Security", "Velvet Sound Studio", "Amber Wave Films", "Starlight Events",
-    None, None, None, None, None  # some clients have no company
+    "Maple Leaf Studios",
+    "Northern Lights Design",
+    "Pacific Web Co",
+    "Summit Digital",
+    "Horizon Analytics",
+    "Blue Ridge Consulting",
+    "Evergreen Labs",
+    "Silver Creek Media",
+    "Wildfire Creative",
+    "Cascade Software",
+    "Pinnacle Solutions",
+    "Lakeside Tech",
+    "Redwood Strategies",
+    "Trailblaze Marketing",
+    "Frostbite Games",
+    "Coral Reef Apps",
+    "Ironclad Security",
+    "Velvet Sound Studio",
+    "Amber Wave Films",
+    "Starlight Events",
+    None,
+    None,
+    None,
+    None,
+    None,  # some clients have no company
 ]
 
 SESSION_DESCRIPTIONS = [
@@ -150,9 +256,7 @@ def random_date_in_range(start: date, end: date) -> date:
 
 def main():
     # Recreate all tables (clears existing data)
-    db_path = os.path.join(os.path.dirname(__file__), "..", "data", "invoices.db")
-    if os.path.exists(db_path):
-        os.remove(db_path)
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
     db = SessionLocal()
@@ -282,15 +386,28 @@ def main():
 
     db.flush()
 
+    # --- Schedule reminders for all invoices ---
+    for inv in invoices:
+        schedule_reminders(db, inv)
+
+    db.flush()
+
     # --- Pay 90% of invoices ---
     payable = random.sample(invoices, k=int(len(invoices) * PAYMENT_RATE))
     for inv in payable:
-        pay_date = inv.issue_date + timedelta(days=random.randint(2, inv.due_date.day if inv.due_date.day > 2 else 15))
+        pay_date = inv.issue_date + timedelta(
+            days=random.randint(2, inv.due_date.day if inv.due_date.day > 2 else 15)
+        )
         # clamp to reasonable range
         pay_date = min(pay_date, inv.due_date + timedelta(days=5))
         method = random.choice(PAYMENT_METHODS)
-        ref_prefix = {"e-transfer": "ET", "check": "CHK", "cash": "CASH",
-                       "stripe": "STR", "paypal": "PP"}
+        ref_prefix = {
+            "e-transfer": "ET",
+            "check": "CHK",
+            "cash": "CASH",
+            "stripe": "STR",
+            "paypal": "PP",
+        }
         ref = f"{ref_prefix[method]}-{random.randint(100000, 999999)}"
 
         p = Payment(
@@ -312,6 +429,12 @@ def main():
         if inv.status != "paid" and inv.due_date < today:
             inv.status = "overdue"
 
+    # Skip reminders for paid invoices
+    for inv in invoices:
+        if inv.status == "paid":
+            for r in db.query(Reminder).filter(Reminder.invoice_id == inv.id).all():
+                r.status = "skipped"
+
     db.commit()
 
     # --- Summary ---
@@ -320,12 +443,17 @@ def main():
     total_invoices = db.query(Invoice).count()
     total_payments = db.query(Payment).count()
     paid_invoices = db.query(Invoice).filter(Invoice.status == "paid").count()
+    total_reminders = db.query(Reminder).count()
+    pending_reminders = db.query(Reminder).filter(Reminder.status == "pending").count()
 
     print(f"Seed data created:")
     print(f"  Clients:  {total_clients}")
     print(f"  Sessions: {total_sessions}")
-    print(f"  Invoices: {total_invoices} ({paid_invoices} paid, {total_invoices - paid_invoices} unpaid/overdue)")
+    print(
+        f"  Invoices: {total_invoices} ({paid_invoices} paid, {total_invoices - paid_invoices} unpaid/overdue)"
+    )
     print(f"  Payments: {total_payments}")
+    print(f"  Reminders: {total_reminders} ({pending_reminders} pending)")
 
     db.close()
 

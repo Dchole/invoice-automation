@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.models.session import Session
 from app.models.invoice import Invoice
 from app.models.client import Client
-from app.models.reminder import Reminder
+from app.services.reminder_engine import schedule_reminders
 from app.config import settings
 
 
@@ -81,15 +81,7 @@ def generate_for_client(
         s.invoice_id = inv.id
         s.status = "invoiced"
 
-    reminder_types = ["friendly", "due", "overdue", "escalation"]
-    for i, days in enumerate(settings.reminder_days):
-        r = Reminder(
-            invoice_id=inv.id,
-            type=reminder_types[i] if i < len(reminder_types) else "escalation",
-            scheduled_date=due + timedelta(days=days),
-            status="pending",
-        )
-        db.add(r)
+    schedule_reminders(db, inv)
 
     db.commit()
     db.refresh(inv)

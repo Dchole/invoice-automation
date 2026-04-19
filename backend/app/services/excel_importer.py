@@ -101,7 +101,57 @@ class ImportResult:
         self.warnings: list[str] = []
 
 
-def _import_client_summary(db: DbSession, wb, client_cache: dict, result: ImportResult):
+def _resolve_client(
+    db: DbSession,
+    client_cache: dict[str, Client],
+    email_cache: dict[str, Client],
+    name: str | None,
+    email: str | None,
+    result: ImportResult,
+    rate: float | None = None,
+) -> Client | None:
+    """Find or create a client, preferring email match over name match."""
+    # 1. Try email match first (most reliable)
+    if email:
+        email_key = email.strip().lower()
+        if email_key in email_cache:
+            return email_cache[email_key]
+        existing = db.query(Client).filter(Client.email == email).first()
+        if existing:
+            email_cache[email_key] = existing
+            client_cache[existing.name.lower()] = existing
+            return existing
+
+    # 2. Try name match
+    if name:
+        name_key = name.strip().lower()
+        if name_key in client_cache:
+            client = client_cache[name_key]
+            # If we have a new email and client doesn't have one, attach it
+            if email and not client.email:
+                client.email = email.strip()
+                email_cache[email.strip().lower()] = client
+            return client
+
+    # 3. Create new client if we have at least a name
+    if name:
+        client = Client(name=name.strip(), default_rate=rate)
+        if email and "@" in email:
+            client.email = email.strip()
+        db.add(client)
+        db.flush()
+        client_cache[name.strip().lower()] = client
+        if client.email:
+            email_cache[client.email.lower()] = client
+        result.clients_created += 1
+        return client
+
+    return None
+
+
+def _import_client_summary(
+    db: DbSession, wb, client_cache: dict, email_cache: dict, result: ImportResult
+):
     """Pre-pass: read Client Summary sheet to populate client details (email, currency, rate)."""
     summary_names = ["client summary", "clients", "client list", "summary"]
     for sheet_name in wb.sheetnames:
@@ -134,28 +184,25 @@ def _import_client_summary(db: DbSession, wb, client_cache: dict, result: Import
                 if not name:
                     continue
 
-                key = name.lower()
-                if key not in client_cache:
-                    rate = _clean_rate(vals[col["rate"]]) if "rate" in col else None
-                    client = Client(name=name, default_rate=rate)
-                    db.add(client)
-                    db.flush()
-                    client_cache[key] = client
-                    result.clients_created += 1
-
-                client = client_cache[key]
+                email = None
                 if "email" in col and vals[col["email"]]:
                     email = str(vals[col["email"]]).strip()
-                    if email and "@" in email:
-                        client.email = email
+                    if "@" not in email:
+                        email = None
+
+                rate = _clean_rate(vals[col["rate"]]) if "rate" in col else None
+                client = _resolve_client(
+                    db, client_cache, email_cache, name, email, result, rate=rate
+                )
+                if not client:
+                    continue
+
                 if "currency" in col and vals[col["currency"]]:
                     currency = str(vals[col["currency"]]).strip().upper()
                     if currency in ("CAD", "USD", "EUR", "GBP"):
                         client.currency = currency
-                if "rate" in col and vals[col["rate"]]:
-                    rate = _clean_rate(vals[col["rate"]])
-                    if rate:
-                        client.default_rate = rate
+                if rate:
+                    client.default_rate = rate
                 if "terms" in col and vals[col["terms"]]:
                     try:
                         client.payment_terms = int(float(vals[col["terms"]]))
@@ -166,13 +213,22 @@ def _import_client_summary(db: DbSession, wb, client_cache: dict, result: Import
             break  # Only process first matching summary sheet
 
 
-def _import_invoices(db: DbSession, sheet_name: str, rows: list, headers: list[str],
-                     client_cache: dict, result: ImportResult):
-    """Import invoice rows, creating Invoice records matched to clients by name."""
+def _import_invoices(
+    db: DbSession,
+    sheet_name: str,
+    rows: list,
+    headers: list[str],
+    client_cache: dict,
+    email_cache: dict,
+    result: ImportResult,
+):
+    """Import invoice rows, creating Invoice records matched to clients by email then name."""
     col = {}
     for i, h in enumerate(headers):
         if "invoice" in h and "number" in h:
             col.setdefault("invoice_number", i)
+        elif "email" in h:
+            col.setdefault("email", i)
         elif "client" in h or h == "name":
             col.setdefault("client", i)
         elif "issue" in h and "date" in h:
@@ -201,7 +257,9 @@ def _import_invoices(db: DbSession, sheet_name: str, rows: list, headers: list[s
             col.setdefault("paid_at", i)
 
     if "invoice_number" not in col:
-        result.warnings.append(f"Sheet '{sheet_name}': no invoice number column, skipping")
+        result.warnings.append(
+            f"Sheet '{sheet_name}': no invoice number column, skipping"
+        )
         return
 
     for row_idx, row in enumerate(rows[1:], start=2):
@@ -213,46 +271,64 @@ def _import_invoices(db: DbSession, sheet_name: str, rows: list, headers: list[s
         # Skip if invoice already exists
         existing = db.query(Invoice).filter(Invoice.invoice_number == inv_num).first()
         if existing:
-            result.warnings.append(f"Sheet '{sheet_name}' row {row_idx}: invoice '{inv_num}' already exists, skipping")
+            result.warnings.append(
+                f"Sheet '{sheet_name}' row {row_idx}: invoice '{inv_num}' already exists, skipping"
+            )
             continue
 
-        # Resolve client
+        # Resolve client by email first, then name
         client = None
-        if "client" in col:
-            client_name = str(vals[col["client"]] or "").strip()
-            if client_name:
-                key = client_name.lower()
-                if key not in client_cache:
-                    c = Client(name=client_name)
-                    db.add(c)
-                    db.flush()
-                    client_cache[key] = c
-                    result.clients_created += 1
-                client = client_cache[key]
+        client_name = str(vals[col["client"]] or "").strip() if "client" in col else None
+        client_email = str(vals[col["email"]] or "").strip() if "email" in col and vals[col.get("email", -1)] else None
+        if client_name or client_email:
+            client = _resolve_client(
+                db, client_cache, email_cache, client_name, client_email, result
+            )
 
         if not client:
-            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: no client for invoice '{inv_num}'")
+            result.errors.append(
+                f"Sheet '{sheet_name}' row {row_idx}: no client for invoice '{inv_num}'"
+            )
             continue
 
-        issue_date = _parse_date(vals[col["issue_date"]]) if "issue_date" in col else None
+        issue_date = (
+            _parse_date(vals[col["issue_date"]]) if "issue_date" in col else None
+        )
         due_date = _parse_date(vals[col["due_date"]]) if "due_date" in col else None
         if not issue_date or not due_date:
-            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: missing issue/due date")
+            result.errors.append(
+                f"Sheet '{sheet_name}' row {row_idx}: missing issue/due date"
+            )
             continue
 
         subtotal = _clean_rate(vals[col["subtotal"]]) if "subtotal" in col else 0
         tax_rate = _clean_rate(vals[col["tax_rate"]]) if "tax_rate" in col else 0
         tax_amount = _clean_rate(vals[col["tax_amount"]]) if "tax_amount" in col else 0
-        total = _clean_rate(vals[col["total"]]) if "total" in col else (subtotal or 0) + (tax_amount or 0)
-        amount_paid = _clean_rate(vals[col["amount_paid"]]) if "amount_paid" in col else 0
-        currency_val = str(vals[col["currency"]]).strip().upper() if "currency" in col and vals[col["currency"]] else client.currency
-        status_val = str(vals[col["status"]]).strip().lower() if "status" in col and vals[col["status"]] else "draft"
+        total = (
+            _clean_rate(vals[col["total"]])
+            if "total" in col
+            else (subtotal or 0) + (tax_amount or 0)
+        )
+        amount_paid = (
+            _clean_rate(vals[col["amount_paid"]]) if "amount_paid" in col else 0
+        )
+        currency_val = (
+            str(vals[col["currency"]]).strip().upper()
+            if "currency" in col and vals[col["currency"]]
+            else client.currency
+        )
+        status_val = (
+            str(vals[col["status"]]).strip().lower()
+            if "status" in col and vals[col["status"]]
+            else "draft"
+        )
 
         sent_at = None
         if "sent_at" in col and vals[col["sent_at"]]:
             d = _parse_date(vals[col["sent_at"]])
             if d:
                 from datetime import datetime as dt
+
                 sent_at = dt.combine(d, dt.min.time())
 
         paid_at = None
@@ -260,6 +336,7 @@ def _import_invoices(db: DbSession, sheet_name: str, rows: list, headers: list[s
             d = _parse_date(vals[col["paid_at"]])
             if d:
                 from datetime import datetime as dt
+
                 paid_at = dt.combine(d, dt.min.time())
 
         invoice = Invoice(
@@ -282,7 +359,9 @@ def _import_invoices(db: DbSession, sheet_name: str, rows: list, headers: list[s
         result.invoices_created += 1
 
 
-def _import_payments(db: DbSession, sheet_name: str, rows: list, headers: list[str], result: ImportResult):
+def _import_payments(
+    db: DbSession, sheet_name: str, rows: list, headers: list[str], result: ImportResult
+):
     """Import payment rows by matching invoice numbers to existing invoices."""
     col = {}
     for i, h in enumerate(headers):
@@ -300,7 +379,9 @@ def _import_payments(db: DbSession, sheet_name: str, rows: list, headers: list[s
             col.setdefault("notes", i)
 
     if "invoice_number" not in col or "amount" not in col:
-        result.warnings.append(f"Sheet '{sheet_name}': missing invoice number or amount column, skipping")
+        result.warnings.append(
+            f"Sheet '{sheet_name}': missing invoice number or amount column, skipping"
+        )
         return
 
     for row_idx, row in enumerate(rows[1:], start=2):
@@ -311,7 +392,9 @@ def _import_payments(db: DbSession, sheet_name: str, rows: list, headers: list[s
 
         invoice = db.query(Invoice).filter(Invoice.invoice_number == inv_num).first()
         if not invoice:
-            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: invoice '{inv_num}' not found")
+            result.errors.append(
+                f"Sheet '{sheet_name}' row {row_idx}: invoice '{inv_num}' not found"
+            )
             continue
 
         amount = _clean_rate(vals[col["amount"]])
@@ -321,21 +404,41 @@ def _import_payments(db: DbSession, sheet_name: str, rows: list, headers: list[s
 
         payment_date = _parse_date(vals[col["date"]]) if "date" in col else None
         if not payment_date:
-            result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: invalid or missing date")
+            result.errors.append(
+                f"Sheet '{sheet_name}' row {row_idx}: invalid or missing date"
+            )
             continue
 
-        method = str(vals[col["method"]]).strip() if "method" in col and vals[col["method"]] else None
-        reference = str(vals[col["reference"]]).strip() if "reference" in col and vals[col["reference"]] else None
-        notes = str(vals[col["notes"]]).strip() if "notes" in col and vals[col["notes"]] else None
+        method = (
+            str(vals[col["method"]]).strip()
+            if "method" in col and vals[col["method"]]
+            else None
+        )
+        reference = (
+            str(vals[col["reference"]]).strip()
+            if "reference" in col and vals[col["reference"]]
+            else None
+        )
+        notes = (
+            str(vals[col["notes"]]).strip()
+            if "notes" in col and vals[col["notes"]]
+            else None
+        )
 
         # Check for duplicate: same invoice, date, and amount
-        existing = db.query(Payment).filter(
-            Payment.invoice_id == invoice.id,
-            Payment.payment_date == payment_date,
-            Payment.amount == amount,
-        ).first()
+        existing = (
+            db.query(Payment)
+            .filter(
+                Payment.invoice_id == invoice.id,
+                Payment.payment_date == payment_date,
+                Payment.amount == amount,
+            )
+            .first()
+        )
         if existing:
-            result.warnings.append(f"Sheet '{sheet_name}' row {row_idx}: duplicate payment skipped")
+            result.warnings.append(
+                f"Sheet '{sheet_name}' row {row_idx}: duplicate payment skipped"
+            )
             continue
 
         payment = Payment(
@@ -354,12 +457,15 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
     result = ImportResult()
     wb = load_workbook(file_path, data_only=True)
     client_cache: dict[str, Client] = {}
+    email_cache: dict[str, Client] = {}
 
     for existing in db.query(Client).all():
         client_cache[existing.name.lower()] = existing
+        if existing.email:
+            email_cache[existing.email.lower()] = existing
 
     # Pre-pass: read client summary sheet for emails, currency, rates
-    _import_client_summary(db, wb, client_cache, result)
+    _import_client_summary(db, wb, client_cache, email_cache, result)
 
     # Categorise sheets
     invoice_sheets = []
@@ -381,9 +487,20 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
             continue  # Already processed in pre-pass
 
         payment_markers = {"payment method", "reference", "invoice number"}
-        invoice_markers = {"invoice number", "due date", "tax rate", "tax rate %", "tax amount", "subtotal"}
-        is_payment_sheet = len(payment_markers & header_set) >= 2 and "duration" not in header_joined
-        is_invoice_sheet = len(invoice_markers & header_set) >= 3 and "duration" not in header_joined
+        invoice_markers = {
+            "invoice number",
+            "due date",
+            "tax rate",
+            "tax rate %",
+            "tax amount",
+            "subtotal",
+        }
+        is_payment_sheet = (
+            len(payment_markers & header_set) >= 2 and "duration" not in header_joined
+        )
+        is_invoice_sheet = (
+            len(invoice_markers & header_set) >= 3 and "duration" not in header_joined
+        )
 
         if is_invoice_sheet and not is_payment_sheet:
             invoice_sheets.append((sheet_name, rows, headers))
@@ -394,7 +511,7 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
 
     # Pass 1: invoices (so payment references resolve)
     for sheet_name, rows, headers in invoice_sheets:
-        _import_invoices(db, sheet_name, rows, headers, client_cache, result)
+        _import_invoices(db, sheet_name, rows, headers, client_cache, email_cache, result)
     db.flush()
 
     # Pass 2: payments
@@ -407,7 +524,9 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
 
         col_map = {}
         for i, h in enumerate(headers):  # noqa: E501
-            if "client" in h or "name" in h:
+            if "email" in h:
+                col_map.setdefault("email", i)
+            elif "client" in h or "name" in h:
                 col_map.setdefault("client", i)
             elif "date" in h and "pay" not in h:
                 col_map.setdefault("date", i)
@@ -425,7 +544,9 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
                 col_map.setdefault("description", i)
 
         if "client" not in col_map:
-            result.warnings.append(f"Sheet '{sheet_name}': no client column found, skipping")
+            result.warnings.append(
+                f"Sheet '{sheet_name}': no client column found, skipping"
+            )
             continue
 
         for row_idx, row in enumerate(rows[1:], start=2):
@@ -434,40 +555,75 @@ def import_excel(db: DbSession, file_path: str) -> ImportResult:
             if not client_name:
                 continue
 
-            if client_name.lower() not in client_cache:
-                rate = _clean_rate(vals[col_map["rate"]]) if "rate" in col_map else None
-                client = Client(name=client_name, default_rate=rate)
-                db.add(client)
-                db.flush()
-                client_cache[client_name.lower()] = client
-                result.clients_created += 1
+            client_email = (
+                str(vals[col_map["email"]]).strip()
+                if "email" in col_map and vals[col_map.get("email", -1)]
+                else None
+            )
+            rate = _clean_rate(vals[col_map["rate"]]) if "rate" in col_map else None
+            client = _resolve_client(
+                db, client_cache, email_cache, client_name, client_email, result, rate=rate
+            )
+            if not client:
+                result.errors.append(
+                    f"Sheet '{sheet_name}' row {row_idx}: could not resolve client"
+                )
+                continue
 
-            client = client_cache[client_name.lower()]
-
-            session_date = _parse_date(vals[col_map["date"]]) if "date" in col_map else None
+            session_date = (
+                _parse_date(vals[col_map["date"]]) if "date" in col_map else None
+            )
             if not session_date:
-                result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: invalid or missing date")
+                result.errors.append(
+                    f"Sheet '{sheet_name}' row {row_idx}: invalid or missing date"
+                )
                 continue
 
             start = _parse_time(vals[col_map["start"]]) if "start" in col_map else None
             end = _parse_time(vals[col_map["end"]]) if "end" in col_map else None
             duration = _parse_duration(
                 vals[col_map["duration"]] if "duration" in col_map else None,
-                start, end,
+                start,
+                end,
             )
             if duration is None or duration <= 0:
-                result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: cannot determine duration")
+                result.errors.append(
+                    f"Sheet '{sheet_name}' row {row_idx}: cannot determine duration"
+                )
                 continue
 
             rate = _clean_rate(vals[col_map["rate"]]) if "rate" in col_map else None
             if rate is None:
                 rate = float(client.default_rate) if client.default_rate else None
             if rate is None:
-                result.errors.append(f"Sheet '{sheet_name}' row {row_idx}: no rate found")
+                result.errors.append(
+                    f"Sheet '{sheet_name}' row {row_idx}: no rate found"
+                )
                 continue
 
             amount = round(duration / 60.0 * rate, 2)
-            desc = str(vals[col_map["description"]]) if "description" in col_map and vals[col_map["description"]] else None
+            desc = (
+                str(vals[col_map["description"]])
+                if "description" in col_map and vals[col_map["description"]]
+                else None
+            )
+
+            # Duplicate detection: same client + date + duration + rate
+            existing = (
+                db.query(Session)
+                .filter(
+                    Session.client_id == client.id,
+                    Session.date == session_date,
+                    Session.duration_minutes == duration,
+                    Session.hourly_rate == rate,
+                )
+                .first()
+            )
+            if existing:
+                result.warnings.append(
+                    f"Sheet '{sheet_name}' row {row_idx}: duplicate session skipped"
+                )
+                continue
 
             session = Session(
                 client_id=client.id,

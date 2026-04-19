@@ -14,12 +14,25 @@ from app.models.invoice import Invoice
 from app.models.payment import Payment
 from app.models.client import Client
 from app.models.session import Session as SessionModel
+from app.models.reminder import Reminder
 from app.services.excel_importer import import_excel
 from app.services.csv_importer import import_csv
 
 router = APIRouter(prefix="/api/import", tags=["import/export"])
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
+
+
+@router.delete("/reset")
+def reset_all_data(db: DbSession = Depends(get_db)):
+    """Delete all data from all tables."""
+    db.query(Reminder).delete()
+    db.query(Payment).delete()
+    db.query(SessionModel).delete()
+    db.query(Invoice).delete()
+    db.query(Client).delete()
+    db.commit()
+    return {"message": "All data cleared"}
 
 
 @router.post("/excel")
